@@ -119,6 +119,9 @@ Shopify behavior:
 - If no product matches, prepare a create.
 - If multiple products match, require manual resolution and skip automatic publishing for that row.
 - Use the editable suggested sale price as the main product variant price; keep column J unit price as supplier cost and write it to the inventory item's Shopify `cost` field.
+- Map the app `brand` field to the Shopify product `vendor`.
+- Map the app `productType` field to the Shopify product `productType`.
+- Set the Shopify product `tags` to a non-empty subset of `[brand, productType, country]`, trimmed and filtered for missing values.
 - Retrieve the variant inventory item, update its `cost`, activate it at `SHOPIFY_LOCATION_ID` when needed, and set its absolute inventory quantity from the editable Shopify inventory field. Include unique idempotency keys in the activation and quantity mutations.
 - Include the edited About this product content in `descriptionHtml`.
 - Import the downloaded column A image only for checked rows whose `Retrieve source data` action completed successfully. Never request or download images for unchecked or merely checked rows.
@@ -201,7 +204,7 @@ For failed publishing:
 8. Test every-column multi-select filtering, filter search, combined filters, empty results, and title ascending/descending sorting with selections preserved.
 9. Test title matching for zero, one, and multiple Shopify matches.
 10. Use an unpublished test product for an end-to-end Shopify create/update smoke test.
-11. Confirm suggested sale price is published as the Shopify variant price, unit price is published as Shopify inventory-item cost, configured-location inventory is updated, the retrieved selected-row image is imported correctly, and supplier SOH G is not used as the Shopify quantity.
+11. Confirm suggested sale price is published as the Shopify variant price, unit price is published as Shopify inventory-item cost, brand is published as the Shopify vendor, productType is published as the Shopify product type, tags are derived from a non-empty subset of brand, productType, and country, configured-location inventory is updated, the retrieved selected-row image is imported correctly, and supplier SOH G is not used as the Shopify quantity.
 12. Test partial publish failures, retries, audit records, issue-log filtering, Reset page state clearing, and token non-exposure.
 13. Run the production build and verify the workflow at desktop and mobile widths.
 14. Build and validate the Docker image, verify the health check, and confirm database, logs, and product images survive container replacement.

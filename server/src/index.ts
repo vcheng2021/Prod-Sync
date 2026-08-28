@@ -35,7 +35,18 @@ try {
 }
 
 app.use(express.json({ limit: '2mb' }));
-app.get('/api/health', (_request, response) => response.json({ ok: true, store: config.storeDomain }));
+app.get('/api/health', (_request, response) => response.json({ ok: true }));
+app.get('/api/ready', (_request, response) => {
+  const missing: string[] = []
+  if (!config.shopifyAdminAccessToken) missing.push('SHOPIFY_ADMIN_ACCESS_TOKEN')
+  if (!config.shopifyLocationId) missing.push('SHOPIFY_LOCATION_ID')
+  response.json({
+    ok: true,
+    shopifyConfigured: missing.length === 0,
+    storeDomain: config.storeDomain,
+    missing,
+  });
+});
 app.use(createImportRouter(store, logger));
 app.use(createPublishingRouter(store, logger));
 app.use('/productimage', express.static(config.productImageDirectory, { maxAge: '1d', index: false }));

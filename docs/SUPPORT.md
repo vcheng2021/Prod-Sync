@@ -162,6 +162,8 @@ Publishing requires selected and valid rows plus final confirmation. The review 
 - one match: update;
 - multiple matches: skip and require manual resolution.
 
+In addition to price, cost, and inventory, the publisher maps the app `brand` to the Shopify product `vendor`, the app `productType` to the Shopify `productType`, and derives Shopify `tags` from a non-empty subset of the `brand`, `productType`, and `country` fields. These are standard `Product` attributes covered by the existing `write_products` scope; no additional Shopify permissions are required.
+
 A Shopify failure is retained on the product and in publish history. The **Posting issues** metric reads the newest failure records for the current draft from `GET /api/issues?draftId=<id>`, backed by `logs/ecomint.log`. Each record includes the event, timestamp, product ID when available, Shopify error text, GraphQL error code, and mutation field path. Product-linked records can be opened from the issue list to return to the product editor. Correct the row and retry. A failed local publish does not justify deleting a product from Shopify.
 
 Inventory publication first updates the inventory item's Cost per item from local unit price, activates the variant inventory item at the configured location when needed, then sends the editable Shopify inventory as an absolute available quantity. Activation and quantity mutations use unique idempotency keys. The token still needs `write_inventory`, and the installing user needs inventory-item and location permission.

@@ -49,6 +49,10 @@ The browser never receives the Shopify Admin token. All supplier network request
 
 `client/src/api.ts` contains the JSON API contract. It must not contain credentials or server-only configuration.
 
+### 3.1 Client layout
+
+The client uses a single-file `App.tsx` with styling in `workspace.css`. The workspace shell is a flex column that fills the viewport (`min-height: 100svh`). Below the brand bar, workspace heading, toolbar, and filter bar, the `.workspace-grid` grows to fill all remaining vertical space (`flex: 1 1 auto`). Both the product table panel and the product details editor panel are set to `height: 100%` and use `display: flex; flex-direction: column`, so each expands dynamically to the browser height. The table content scrolls internally within `.table-wrap` (with sticky column headers preserved); the editor panel scrolls vertically. On screens narrower than 1050 px the grid collapses to a single column and both panels return to natural height so the page scrolls normally. The application background uses a warm cellar-shop palette with amber radial lighting glows in both light and dark themes.
+
 ### Server
 
 `server/src/index.ts` creates configuration, the logger, and the SQLite store before registering routes. It performs one-time startup seed/restore handling and serves the built client from `client/dist`.
@@ -187,7 +191,7 @@ Successful source details are sanitized before SQLite storage, browser display, 
 
 The publisher normalizes a title and queries Shopify. Exactly one title match updates the existing product, zero matches creates a product, and multiple matches skip automatic publication for manual resolution.
 
-The suggested sale price is sent as the main variant `price`; the supplier unit price is not used as the retail price. The publisher retrieves the variant inventory item ID, writes the supplier unit price to the inventory item's `cost` field, activates the item at `SHOPIFY_LOCATION_ID` when necessary, and sets the absolute available quantity from the editable Shopify inventory field. Shopify's variant `unitPrice` is calculated from `unitPriceMeasurement`, so this application does not assign that read-only calculated value.
+The suggested sale price is sent as the main variant `price`; the supplier unit price is not used as the retail price. The app `brand` maps to the Shopify product `vendor`, the app `productType` maps to the Shopify product `productType`, and the Shopify product `tags` are derived from a non-empty subset of `[brand, productType, country]`. The publisher retrieves the variant inventory item ID, writes the supplier unit price to the inventory item's `cost` field, activates the item at `SHOPIFY_LOCATION_ID` when necessary, and sets the absolute available quantity from the editable Shopify inventory field. Shopify's variant `unitPrice` is calculated from `unitPriceMeasurement`, so this application does not assign that read-only calculated value.
 
 Publishing requires a server token and a configured location. The inventory-item cost update, inventory activation, and inventory quantity mutations require inventory write access; API version `2026-07` also requires a unique `@idempotent(key: ...)` request key on the activation and quantity mutations. Product mutations, variant mutations, inventory-item cost updates, inventory activation, inventory quantity updates, and media mutations all check returned `userErrors`; GraphQL transport errors retain their extension code and mutation errors retain their field path when available. `write_inventory` and permission to manage the configured location are still required. A partial failure remains retryable and is recorded in `publish_events` and the physical log.
 

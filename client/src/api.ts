@@ -128,3 +128,13 @@ export const publishProducts = (draftId: string, productIds: string[], changes: 
   });
 
 export const exportDraftUrl = (draftId: string): string => `/api/drafts/${draftId}/export`;
+
+export interface ReadinessStatus {
+  ok: boolean;
+  shopifyConfigured: boolean;
+  storeDomain: string;
+  missing: string[];
+}
+
+export const getReadiness = (): Promise<ReadinessStatus> =>
+  requestJson<ReadinessStatus>('/api/ready');

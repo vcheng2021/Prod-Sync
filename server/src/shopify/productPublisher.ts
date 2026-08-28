@@ -66,6 +66,9 @@ const descriptionForShopify = (product: ProductDraft): string =>
 
 const searchTitle = (title: string): string => `title:"${title.replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"`;
 
+const buildTags = (product: ProductDraft): string[] =>
+  [product.brand, product.productType, product.country].map((value) => value.trim()).filter((value) => value.length > 0);
+
 export const findProductMatches = async (title: string): Promise<ProductMatch[]> => {
   const data = await shopifyAdminClient.request<MatchResponse>(
     `query ProductMatches($query: String!) {
@@ -141,7 +144,7 @@ const updateInventory = async (inventoryItemId: string | undefined, quantity: nu
         name: 'available',
         reason: 'correction',
         referenceDocumentUri: 'ecomint://product-sync',
-        quantities: [{ inventoryItemId, locationId: config.shopifyLocationId, quantity }],
+        quantities: [{ inventoryItemId, locationId: config.shopifyLocationId, quantity, changeFromQuantity: null }],
       },
       idempotencyKey: crypto.randomUUID(),
     },
@@ -194,7 +197,7 @@ export const publishProduct = async (product: ProductDraft): Promise<ProductPubl
         `mutation UpdateProduct($input: ProductInput!) {
           productUpdate(input: $input) { product { id variants(first: 1) { nodes { id inventoryItem { id } } } } userErrors { field message } }
         }`,
-        { input: { id: existing.id, title: product.title.trim(), descriptionHtml, status: 'ACTIVE' } },
+        { input: { id: existing.id, title: product.title.trim(), descriptionHtml, status: 'ACTIVE', vendor: product.brand || undefined, productType: product.productType || undefined, tags: buildTags(product) } },
       );
       const mutation = result.productUpdate;
       if (!mutation) throw new Error('Shopify returned no product update result.');
@@ -209,7 +212,7 @@ export const publishProduct = async (product: ProductDraft): Promise<ProductPubl
         `mutation CreateProduct($product: ProductCreateInput!) {
           productCreate(product: $product) { product { id variants(first: 1) { nodes { id inventoryItem { id } } } } userErrors { field message } }
         }`,
-        { product: { title: product.title.trim(), descriptionHtml, status: 'ACTIVE' } },
+        { product: { title: product.title.trim(), descriptionHtml, status: 'ACTIVE', vendor: product.brand || undefined, productType: product.productType || undefined, tags: buildTags(product) } },
       );
       const mutation = result.productCreate;
       if (!mutation) throw new Error('Shopify returned no product create result.');
