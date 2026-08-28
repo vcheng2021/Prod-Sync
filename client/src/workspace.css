@@ -52,7 +52,7 @@ a { color: inherit; }
 .brand-dot { width: 11px; height: 11px; display: inline-block; background: var(--coral); border-radius: 50%; box-shadow: 5px 0 0 var(--acid); }
 .brand-context { color: var(--muted); margin-left: 8px; }
 .connection-pill { display: inline-flex; align-items: center; border: 1px solid #bdc9a2; background: rgba(215, 237, 113, 0.34); color: var(--acid-ink); border-radius: 99px; padding: 7px 11px; font: 500 11px/1 var(--mono); }
-.header-actions { display: flex; align-items: center; gap: 12px; }
+.header-actions { display: flex; align-items: center; justify-content: flex-end; flex-wrap: wrap; gap: 12px; }
 
 .import-hero { max-width: 850px; padding: clamp(68px, 11vw, 150px) 4vw 80px; }
 .eyebrow { color: var(--coral); font: 500 11px/1.2 var(--mono); letter-spacing: 0.12em; text-transform: uppercase; }
@@ -80,6 +80,7 @@ a { color: inherit; }
 .button:hover:not(:disabled) { transform: translateY(-1px); }
 .button-primary { color: var(--acid-ink); background: var(--acid); border-color: #bdd257; }
 .button-secondary { color: var(--ink); background: var(--panel); border-color: var(--line); }
+.button-danger { color: #fffaf7; background: var(--coral); border-color: #c85f4b; }
 .button-quiet { min-height: 32px; padding: 6px 10px; color: var(--muted); background: transparent; border-color: var(--line); font-size: 12px; }
 .text-button { border: 0; padding: 0; color: var(--coral); background: transparent; font-weight: 600; text-decoration: underline; text-underline-offset: 3px; }
 

@@ -1,0 +1,45 @@
+FROM node:20-bookworm-slim AS builder
+
+WORKDIR /app
+
+COPY package*.json ./
+COPY client/package*.json ./client/
+COPY server/tsconfig.json ./server/
+
+RUN apt-get update \
+  && apt-get install --no-install-recommends -y python3 make g++ \
+  && npm ci \
+  && npm install --prefix client \
+  && rm -rf /var/lib/apt/lists/*
+
+COPY client ./client
+COPY server ./server
+COPY suppliers ./suppliers
+
+RUN npm run build
+
+FROM node:20-bookworm-slim AS runtime
+
+ENV NODE_ENV=production
+ENV PORT=8787
+ENV DATABASE_PATH=/app/data/ecomint.db
+ENV PRODUCT_IMAGE_DIRECTORY=/app/productimage
+ENV LOG_DIRECTORY=/app/logs
+
+WORKDIR /app
+
+COPY package*.json ./
+RUN npm ci --omit=dev && npm cache clean --force
+
+COPY --from=builder /app/client/dist ./client/dist
+COPY --from=builder /app/server/dist ./server/dist
+COPY --from=builder /app/suppliers ./suppliers
+
+RUN mkdir -p /app/data /app/logs /app/productimage
+
+EXPOSE 8787
+
+HEALTHCHECK --interval=10s --timeout=5s --start-period=30s --retries=3 \
+  CMD node -e "require('http').get('http://127.0.0.1:8787/api/health', r => process.exit(r.statusCode === 200 ? 0 : 1)).on('error', () => process.exit(1))"
+
+CMD ["node", "server/dist/index.js"]

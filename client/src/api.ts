@@ -6,6 +6,7 @@ export interface ProductDraft {
   id: string;
   draftId: string;
   rowNumber: number;
+  supplierProductKey: string;
   imageUrl: string;
   imageLocalFilename: string;
   imageLocalUrl: string;
@@ -15,6 +16,8 @@ export interface ProductDraft {
   stockOnHand: number | null;
   casePrice: number | null;
   unitPrice: number | null;
+  suggestedSalePrice: number | null;
+  inventoryQuantity: number;
   descriptionHtml: string;
   brand: string;
   country: string;
@@ -53,6 +56,7 @@ interface ImportResponse extends DraftResponse {
   sheetName: string;
   headers: string[];
   importErrors: string[];
+  importSummary: { added: number; updated: number; unchanged: number; invalid: number; duplicateRowsSkipped: number };
 }
 
 const readError = async (response: Response): Promise<string> => {
@@ -76,6 +80,8 @@ export const importWorkbook = async (file: File): Promise<ImportResponse> => {
   return requestJson<ImportResponse>('/api/imports', { method: 'POST', body: form });
 };
 
+export const getCurrentDraft = (): Promise<DraftResponse | null> => requestJson<DraftResponse | null>('/api/drafts/current');
+
 export const getDraft = (draftId: string): Promise<DraftResponse> => requestJson<DraftResponse>(`/api/drafts/${draftId}`);
 
 export const updateProduct = (draftId: string, productId: string, patch: Partial<ProductDraft>): Promise<ProductDraft> =>
@@ -83,6 +89,20 @@ export const updateProduct = (draftId: string, productId: string, patch: Partial
     method: 'PATCH',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(patch),
+  });
+
+export const saveProducts = (draftId: string, products: Array<{ id: string; changes: Partial<ProductDraft> }>): Promise<{ products: ProductDraft[]; draft: DraftResponse }> =>
+  requestJson<{ products: ProductDraft[]; draft: DraftResponse }>(`/api/drafts/${draftId}/products`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ products }),
+  });
+
+export const purgeDatabase = (): Promise<{ draft: null; removedImages: number }> =>
+  requestJson<{ draft: null; removedImages: number }>('/api/database/purge', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ confirmation: 'PURGE' }),
   });
 
 export const refreshProduct = (draftId: string, productId: string): Promise<ProductDraft> =>

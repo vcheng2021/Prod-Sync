@@ -6,6 +6,7 @@ export interface ProductDraft {
   id: string;
   draftId: string;
   rowNumber: number;
+  supplierProductKey: string;
   imageUrl: string;
   imageLocalFilename: string;
   imageLocalUrl: string;
@@ -15,6 +16,8 @@ export interface ProductDraft {
   stockOnHand: number | null;
   casePrice: number | null;
   unitPrice: number | null;
+  suggestedSalePrice: number | null;
+  inventoryQuantity: number;
   descriptionHtml: string;
   brand: string;
   country: string;
@@ -49,6 +52,14 @@ export interface DraftSummary {
 export interface DraftResponse {
   draft: DraftSummary;
   products: ProductDraft[];
+}
+
+export interface WorkbookImportSummary {
+  added: number;
+  updated: number;
+  unchanged: number;
+  invalid: number;
+  duplicateRowsSkipped: number;
 }
 
 export interface EnrichedProductDetails {

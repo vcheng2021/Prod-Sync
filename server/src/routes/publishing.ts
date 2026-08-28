@@ -1,9 +1,10 @@
 import { Router } from 'express';
 import type { DraftStore } from '../drafts/draftStore.js';
 import { createDraftWorkbook } from '../exports/excelExporter.js';
+import { AppLogger } from '../logging/logger.js';
 import { publishProduct } from '../shopify/productPublisher.js';
 
-export const createPublishingRouter = (store: DraftStore): Router => {
+export const createPublishingRouter = (store: DraftStore, logger: AppLogger): Router => {
   const router = Router();
 
   router.get('/api/drafts/:draftId/export', (request, response, next) => {
@@ -32,10 +33,12 @@ export const createPublishingRouter = (store: DraftStore): Router => {
         store.savePublishResult(request.params.draftId, product.id, 'publishing', null, '');
         const result = await publishProduct(product);
         store.savePublishResult(request.params.draftId, product.id, result.status, result.shopifyProductId, result.error);
+        logger.write('product.publish', result.status === 'published' ? 'success' : 'failure', { draftId: request.params.draftId, productId: product.id, status: result.status, action: result.action, matchCount: result.matchCount, error: result.error });
         results.push({ productId: product.id, ...result });
       }
       return response.json({ results, draft: store.getDraft(request.params.draftId) });
     } catch (error) {
+      logger.write('product.publish', 'failure', { draftId: request.params.draftId, error: error instanceof Error ? error.message : 'Products could not be posted.' });
       return next(error);
     }
   });
