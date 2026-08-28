@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import {
   exportDraftUrl,
+  getIssueLog,
   getCurrentDraft,
   importWorkbook,
   publishProducts,
@@ -9,6 +10,7 @@ import {
   saveProducts,
   updateProduct,
   type DraftResponse,
+  type LogIssue,
   type ProductDraft,
 } from './api'
 import './App.css'
@@ -43,6 +45,7 @@ const statusText: Record<string, string> = {
 }
 
 const money = (value: number | null) => value === null ? '-' : `$${value.toFixed(2)}`
+const logDetailValue = (value: unknown): string => typeof value === 'string' ? value : JSON.stringify(value) ?? String(value)
 
 const filterValue = (product: ProductDraft, field: FilterField): string => {
   if (field === 'title') return product.title || 'Untitled product'
@@ -106,6 +109,9 @@ function App() {
   const [retrievingProductId, setRetrievingProductId] = useState<string | null>(null)
   const [message, setMessage] = useState('')
   const [error, setError] = useState('')
+  const [issuesOpen, setIssuesOpen] = useState(false)
+  const [issuesLoading, setIssuesLoading] = useState(false)
+  const [logIssues, setLogIssues] = useState<LogIssue[]>([])
 
   const activeProduct = draft?.products.find((product) => product.id === activeProductId) ?? draft?.products[0] ?? null
   const hasUnsavedChanges = Object.keys(dirtyFields).length > 0
@@ -173,9 +179,11 @@ function App() {
   const visibleProducts = filteredProducts.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE)
   const selectedProducts = draft?.products.filter((product) => product.selected) ?? []
   const validSelectedProducts = selectedProducts.filter((product) => product.validationErrors.length === 0 && product.suggestedSalePrice !== null && product.suggestedSalePrice > 0 && Number.isInteger(product.inventoryQuantity) && product.inventoryQuantity >= 0)
+  const issueProducts = (draft?.products ?? []).filter((product) => product.publishError || product.enrichmentError || product.validationErrors.length > 0)
 
   const replaceProduct = (product: ProductDraft) => {
-    setDraft((current) => current ? { ...current, products: current.products.map((entry) => entry.id === product.id ? product : entry) } : current)
+    const pendingChanges = dirtyFields[product.id] ?? {}
+    setDraft((current) => current ? { ...current, products: current.products.map((entry) => entry.id === product.id ? { ...product, ...pendingChanges } : entry) } : current)
   }
 
   const patchProduct = (productId: string, patch: Partial<ProductDraft>) => {
@@ -235,6 +243,16 @@ function App() {
       setDirtyFields({})
       setImportErrors(result.importErrors)
       setActiveProductId(result.products[0]?.id ?? null)
+      setQuery('')
+      setStatusFilter('all')
+      setTitleSort('none')
+      setColumnFilters({})
+      setPage(1)
+      setReviewOpen(false)
+      setConfirmPost(false)
+      setIssuesOpen(false)
+      setIssuesLoading(false)
+      setLogIssues([])
       setMessage(`${result.products.length.toLocaleString()} products merged from ${result.sheetName}: ${result.importSummary.added} added, ${result.importSummary.updated} updated, ${result.importSummary.unchanged} unchanged, ${result.importSummary.duplicateRowsSkipped} exact duplicates skipped.`)
     } catch (requestError) {
       setError(requestError instanceof Error ? requestError.message : 'The workbook could not be imported.')
@@ -244,13 +262,31 @@ function App() {
     }
   }
 
-  const handleNewImport = () => {
-    if (hasUnsavedChanges && !window.confirm('You have unsaved changes. Start a new workbook import and discard them?')) return
+  const resetPageState = () => {
     setDraft(null)
     setDirtyFields({})
     setImportErrors([])
+    setActiveProductId(null)
+    setQuery('')
+    setStatusFilter('all')
+    setTitleSort('none')
+    setColumnFilters({})
+    setPage(1)
+    setReviewOpen(false)
+    setConfirmPost(false)
+    setRetrievingProductId(null)
+    setIssuesOpen(false)
+    setIssuesLoading(false)
+    setLogIssues([])
+    setPurgeOpen(false)
+    setPurgeConfirmation('')
     setMessage('')
     setError('')
+  }
+
+  const handleResetPage = () => {
+    if (hasUnsavedChanges && !window.confirm('You have unsaved changes. Start a new workbook import and discard them?')) return
+    resetPageState()
   }
 
   const handlePurge = async () => {
@@ -263,6 +299,17 @@ function App() {
       setDirtyFields({})
       setImportErrors([])
       setActiveProductId(null)
+      setQuery('')
+      setStatusFilter('all')
+      setTitleSort('none')
+      setColumnFilters({})
+      setPage(1)
+      setReviewOpen(false)
+      setConfirmPost(false)
+      setRetrievingProductId(null)
+      setIssuesOpen(false)
+      setIssuesLoading(false)
+      setLogIssues([])
       setPurgeOpen(false)
       setPurgeConfirmation('')
       setMessage('Database content purged. Choose a workbook to start fresh.')
@@ -310,13 +357,45 @@ function App() {
     return 'Retrieve source data'
   }
 
+  const handleShowIssues = async () => {
+    if (!draft) return
+    setIssuesOpen(true)
+    setIssuesLoading(true)
+    setError('')
+    try {
+      setLogIssues(await getIssueLog(draft.draft.id))
+    } catch (requestError) {
+      setError(requestError instanceof Error ? requestError.message : 'The issues log could not be loaded.')
+    } finally {
+      setIssuesLoading(false)
+    }
+  }
+
   const handlePublish = async () => {
     if (!draft || !confirmPost || validSelectedProducts.length === 0) return
     setPublishing(true)
     setError('')
     try {
-      const result = await publishProducts(draft.draft.id, validSelectedProducts.map((product) => product.id))
+      const pendingChanges = Object.entries(dirtyFields).map(([id, productChanges]) => ({ id, changes: productChanges }))
+      const publishChanges = validSelectedProducts.reduce((changes, product) => {
+        const existing = changes.find((entry) => entry.id === product.id)
+        if (existing) existing.changes = { ...existing.changes, selected: true }
+        else changes.push({ id: product.id, changes: { selected: true } })
+        return changes
+      }, pendingChanges.map((change) => ({ id: change.id, changes: { ...change.changes } })))
+      const result = await publishProducts(draft.draft.id, validSelectedProducts.map((product) => product.id), publishChanges)
       setDraft(result.draft)
+      setDirtyFields((current) => {
+        const remaining = { ...current }
+        for (const change of pendingChanges) {
+          const pending = remaining[change.id]
+          if (!pending) continue
+          const unresolved = Object.fromEntries(Object.entries(pending).filter(([field, value]) => change.changes[field as keyof ProductDraft] !== value)) as Partial<ProductDraft>
+          if (Object.keys(unresolved).length) remaining[change.id] = unresolved
+          else delete remaining[change.id]
+        }
+        return remaining
+      })
       setReviewOpen(false)
       setConfirmPost(false)
       const failed = result.results.filter((entry) => entry.status === 'failed' || entry.status === 'skipped').length
@@ -374,7 +453,7 @@ function App() {
     <main className="app-shell workspace-shell">
       <header className="brandbar">
         <div className="brandmark"><span className="brand-dot" /> CELLAR / DRIVE <span className="brand-context">PRODUCT DESK</span></div>
-        <div className="header-actions"><span className="connection-pill">cb1710-2.myshopify.com</span><button type="button" className="button button-primary" disabled={!hasUnsavedChanges || saving} onClick={() => void handleSave()}>{saving ? 'Saving...' : hasUnsavedChanges ? 'Save changes' : 'Saved'}</button><button type="button" className="button button-quiet" onClick={handleNewImport}>New import</button><button type="button" className="button button-danger" onClick={() => setPurgeOpen(true)}>Purge database</button></div>
+        <div className="header-actions"><span className="connection-pill">cb1710-2.myshopify.com</span><button type="button" className="button button-primary" disabled={!hasUnsavedChanges || saving} onClick={() => void handleSave()}>{saving ? 'Saving...' : hasUnsavedChanges ? 'Save changes' : 'Saved'}</button><button type="button" className="button button-quiet" disabled={busy || publishing || saving} onClick={handleResetPage}>Reset page</button><button type="button" className="button button-danger" onClick={() => setPurgeOpen(true)}>Purge database</button></div>
       </header>
 
       <section className="workspace-heading">
@@ -386,7 +465,7 @@ function App() {
         <div><span>Rows loaded</span><strong>{draft.draft.totalProducts.toLocaleString()}</strong></div>
         <div><span>Selected</span><strong>{draft.draft.selectedProducts.toLocaleString()}</strong></div>
         <div><span>Source pages ready</span><strong>{draft.draft.readyProducts.toLocaleString()}</strong></div>
-        <div><span>Posting issues</span><strong className={draft.draft.failedProducts ? 'metric-alert' : ''}>{draft.draft.failedProducts.toLocaleString()}</strong></div>
+        <button type="button" className={`metric-card ${issuesOpen ? 'is-active' : ''}`} onClick={() => void handleShowIssues()} aria-expanded={issuesOpen}><span>Posting issues</span><strong className={draft.draft.failedProducts ? 'metric-alert' : ''}>{draft.draft.failedProducts.toLocaleString()}</strong></button>
       </section>
 
       <section className="toolbar">
@@ -442,12 +521,36 @@ function App() {
               </div>
             </section>
             {activeProduct.enrichmentError && <p className="source-error">Source retrieval: {activeProduct.enrichmentError}</p>}
+            {activeProduct.publishError && <div className="validation-box publish-issue"><strong>Shopify needs attention</strong><span>{activeProduct.publishError}</span></div>}
             <label className="field"><span>Description</span><textarea rows={6} value={activeProduct.descriptionHtml} onChange={(event) => patchProduct(activeProduct.id, { descriptionHtml: event.target.value })} placeholder="Fetched description or your own copy" /></label>
             <div className="detail-fields">{(['brand', 'country', 'region', 'productType', 'abv', 'containerType', 'style'] as const).map((field) => <label className="field" key={field}><span>{field === 'abv' ? 'ABV %' : field === 'productType' ? 'Product Type' : field === 'containerType' ? 'Container Type' : field[0].toLocaleUpperCase() + field.slice(1)}</span><input value={activeProduct[field]} onChange={(event) => patchProduct(activeProduct.id, { [field]: event.target.value } as Partial<ProductDraft>)} /></label>)}</div>
             {activeProduct.validationErrors.length > 0 && <div className="validation-box"><strong>Needs attention</strong>{activeProduct.validationErrors.map((validationError) => <span key={validationError}>{validationError}</span>)}</div>}
           </> : <div className="empty-state">Choose a product to edit.</div>}
         </aside>
       </section>
+
+      {issuesOpen && <section className="issues-log" aria-labelledby="issues-title">
+        <div className="issues-heading"><div><div className="eyebrow">ISSUES LOG / LOG FILE</div><h2 id="issues-title">{issuesLoading ? 'Loading log issues...' : logIssues.length ? `${logIssues.length.toLocaleString()} recent log issue${logIssues.length === 1 ? '' : 's'}` : issueProducts.length ? `${issueProducts.length.toLocaleString()} product${issueProducts.length === 1 ? '' : 's'} need attention` : 'No active issues'}</h2></div><div className="issues-actions"><span>logs/ecomint.log</span><button type="button" className="text-button" disabled={issuesLoading} onClick={() => void handleShowIssues()}>Refresh log</button></div></div>
+        {issuesLoading && <p className="issue-overflow">Reading failure entries for this draft.</p>}
+        {!issuesLoading && logIssues.length > 0 && <div className="issue-list">{logIssues.map((issue, index) => {
+          const productId = typeof issue.details.productId === 'string' ? issue.details.productId : null
+          const product = productId ? draft?.products.find((entry) => entry.id === productId) : null
+          return <article className="issue-entry" key={`${issue.timestamp}-${issue.event}-${index}`}>
+            {product ? <button type="button" className="issue-product" onClick={() => setActiveProductId(product.id)}><strong>{product.title || 'Untitled product'}</strong><small>Row {product.rowNumber} / {statusText[product.publishStatus] ?? product.publishStatus}</small></button> : <div className="issue-product"><strong>{issue.event}</strong><small>{new Date(issue.timestamp).toLocaleString()}</small></div>}
+            <div className="issue-details"><p><strong>Event:</strong> {issue.event}</p><p><strong>Time:</strong> {new Date(issue.timestamp).toLocaleString()}</p>{Object.entries(issue.details).map(([key, value]) => <p key={key}><strong>{key}:</strong> {logDetailValue(value)}</p>)}</div>
+          </article>
+        })}</div>}
+        {issueProducts.length > 0 && <div className="issues-subheading"><div className="eyebrow">CATALOG DETAILS</div><span>Current status stored with each product</span></div>}
+        {issueProducts.length > 0 && <div className="issue-list">{issueProducts.slice(0, 100).map((product) => <article className="issue-entry" key={product.id}>
+          <button type="button" className="issue-product" onClick={() => setActiveProductId(product.id)}><strong>{product.title || 'Untitled product'}</strong><small>Row {product.rowNumber} / {statusText[product.publishStatus] ?? product.publishStatus}</small></button>
+          <div className="issue-details">
+            {product.publishError && <p><strong>Shopify:</strong> {product.publishError}</p>}
+            {product.enrichmentError && <p><strong>Source retrieval:</strong> {product.enrichmentError}</p>}
+            {product.validationErrors.map((validationError) => <p key={validationError}><strong>Validation:</strong> {validationError}</p>)}
+          </div>
+        </article>)}</div>}
+        {issueProducts.length > 100 && <p className="issue-overflow">Showing the first 100 issues. Export all data for the complete working set.</p>}
+      </section>}
 
       {importErrors.length > 0 && <details className="import-errors"><summary>{importErrors.length.toLocaleString()} import warnings</summary><div>{importErrors.slice(0, 100).map((importError) => <p key={importError}>{importError}</p>)}{importErrors.length > 100 && <p>Showing the first 100 warnings. Export all data for the complete working set.</p>}</div></details>}
 

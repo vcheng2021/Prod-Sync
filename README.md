@@ -2,6 +2,8 @@
 
 Local product workspace for importing supplier Excel data, editing product content, retrieving source details, and publishing approved products to Shopify.
 
+The application uses a React/Vite client and an Express/TypeScript server. SQLite is the source of truth for the current catalog, while the JSON Lines event log records operational failures and outcomes.
+
 ## Quick start
 
 ```powershell
@@ -12,7 +14,19 @@ npm install --prefix client
 
 Open `http://127.0.0.1:5173`. Stop local processes with `./stop.ps1`.
 
-The server persists its catalog in SQLite, writes operational events to `logs/ecomint.log`, and stores downloaded images in `productimage`. Copy `.env.example` to `.env` and configure Shopify credentials and `SHOPIFY_LOCATION_ID` before publishing.
+The server persists its catalog in SQLite, writes operational events to `logs/ecomint.log`, and stores downloaded images in `productimage`. Copy `.env.example` to `.env` and configure Shopify credentials and `SHOPIFY_LOCATION_ID` before publishing. The Shopify token is server-only and must have product and inventory permissions.
+
+## Application workflow
+
+1. Import an `.xlsx` workbook. Column B is the stable supplier product key; matching rows merge into the existing SQLite catalog.
+2. Check rows and explicitly retrieve source details or images. Checking a row alone does not make a supplier request.
+3. Edit any supported product field. Ordinary edits remain in the browser dirty-field map until **Save changes** is pressed.
+4. Open the posting review. The publish request includes the staged field changes and persists them transactionally before Shopify receives the product, so the posted values match the review values. Suggested sale price becomes the Shopify variant retail price; unit price becomes Shopify's inventory-item cost.
+5. Select the **Posting issues** metric to read failure entries from `logs/ecomint.log`. The view includes timestamps, event names, product IDs, Shopify field paths, and error messages.
+
+The **Reset page** action clears the current screen, filters, selections, messages, issue view, and unsaved browser state without deleting SQLite data. Use **Purge database** only when the local catalog, cache, publish history, and downloaded application-owned images should be deleted.
+
+Shopify API version `2026-07` requires an `@idempotent` key on inventory mutations. The publisher supplies a new key for inventory activation and quantity updates. The installed Shopify app/token must still be reauthorized with `write_inventory` and permission to manage the configured location. Shopify's variant `unitPrice` is calculated from unit-price measurements; the editable Shopify field updated by this app is inventory-item `cost`, displayed as "Cost per item".
 
 ## Docker
 
@@ -34,5 +48,6 @@ Compose persists SQLite data, logs, and downloaded images in named volumes. Stop
 - [Technical architecture](docs/ARCHITECTURE.md)
 - [Support runbook](docs/SUPPORT.md)
 - [Implementation plan](IMPLEMENTATION_PLAN.md)
+- [Change history](CHANGELOG.md)
 
 This is a single-instance internal application. Do not run multiple containers against the same SQLite volume. Never commit `.env`, Shopify tokens, database files, logs, or downloaded images.

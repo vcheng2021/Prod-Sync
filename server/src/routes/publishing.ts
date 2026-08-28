@@ -3,6 +3,7 @@ import type { DraftStore } from '../drafts/draftStore.js';
 import { createDraftWorkbook } from '../exports/excelExporter.js';
 import { AppLogger } from '../logging/logger.js';
 import { publishProduct } from '../shopify/productPublisher.js';
+import type { ProductDraft } from '../types.js';
 
 export const createPublishingRouter = (store: DraftStore, logger: AppLogger): Router => {
   const router = Router();
@@ -23,6 +24,11 @@ export const createPublishingRouter = (store: DraftStore, logger: AppLogger): Ro
   router.post('/api/drafts/:draftId/publish', async (request, response, next) => {
     try {
       if (request.body?.confirmed !== true) return response.status(400).json({ error: 'Confirm the selected products before publishing.' });
+      const changes = request.body?.changes;
+      if (changes !== undefined && (!Array.isArray(changes) || changes.some((entry) => !entry || typeof entry.id !== 'string' || !entry.changes || typeof entry.changes !== 'object' || Array.isArray(entry.changes)))) {
+        return response.status(400).json({ error: 'Expected changes with an id and changes object.' });
+      }
+      if (changes?.length) store.updateProducts(request.params.draftId, changes as Array<{ id: string; changes: Partial<ProductDraft> }>);
       const draft = store.getDraft(request.params.draftId);
       const requestedIds = Array.isArray(request.body.productIds) ? new Set(request.body.productIds as string[]) : null;
       const products = draft.products.filter((product) => product.selected && (!requestedIds || requestedIds.has(product.id)));

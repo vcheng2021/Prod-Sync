@@ -87,6 +87,9 @@ a { color: inherit; }
 .metric-row { display: grid; grid-template-columns: repeat(4, 1fr); border-block: 1px solid var(--line); }
 .metric-row > div { min-height: 94px; display: flex; flex-direction: column; justify-content: center; gap: 5px; padding: 15px 18px; border-right: 1px solid var(--line); }
 .metric-row > div:last-child { border-right: 0; }
+.metric-row > button { min-height: 94px; display: flex; flex-direction: column; justify-content: center; gap: 5px; padding: 15px 18px; border: 0; border-right: 1px solid var(--line); color: var(--ink); background: transparent; text-align: left; }
+.metric-row > button:hover, .metric-row > button.is-active { background: rgba(215, 237, 113, 0.17); }
+.metric-row > button:last-child { border-right: 0; }
 .metric-row span { color: var(--muted); font: 11px/1.2 var(--mono); text-transform: uppercase; letter-spacing: 0.07em; }
 .metric-row strong { font-size: 28px; letter-spacing: -0.04em; }
 .metric-alert { color: var(--coral); }
@@ -173,6 +176,22 @@ td small { margin-top: 3px; color: var(--muted); font-size: 11px; }
 .detail-fields { display: grid; grid-template-columns: repeat(2, 1fr); gap: 0 10px; }
 .validation-box { display: flex; flex-direction: column; gap: 5px; margin-top: 17px; padding: 12px; border-left: 3px solid var(--coral); background: var(--coral-soft); color: #71362c; font-size: 12px; }
 .validation-box strong { margin-bottom: 3px; }
+.publish-issue { margin-top: 12px; }
+.issues-log { margin-top: 18px; border-block: 1px solid var(--line); background: rgba(255, 253, 247, 0.68); }
+.issues-heading { display: flex; align-items: end; justify-content: space-between; gap: 18px; padding: 18px 15px; }
+.issues-heading h2 { margin: 5px 0 0; font-size: 20px; letter-spacing: -0.035em; }
+.issues-actions { display: flex; align-items: center; gap: 14px; color: var(--muted); font: 11px/1.2 var(--mono); }
+.issues-subheading { display: flex; align-items: baseline; justify-content: space-between; gap: 14px; padding: 15px; border-top: 1px solid var(--soft-line); }
+.issues-subheading > span { color: var(--muted); font: 11px/1.2 var(--mono); }
+.issue-list { border-top: 1px solid var(--soft-line); }
+.issue-entry { display: grid; grid-template-columns: minmax(190px, 0.7fr) minmax(0, 1.3fr); gap: 18px; padding: 14px 15px; border-bottom: 1px solid var(--soft-line); }
+.issue-product { align-self: start; padding: 0; border: 0; color: var(--ink); background: transparent; text-align: left; }
+.issue-product:hover strong { color: var(--coral); }
+.issue-product strong, .issue-product small { display: block; }
+.issue-product small { margin-top: 4px; color: var(--muted); font: 10px/1.2 var(--mono); }
+.issue-details p { margin: 0 0 6px; color: #71362c; font-size: 12px; overflow-wrap: anywhere; }
+.issue-details p:last-child { margin-bottom: 0; }
+.issue-overflow { margin: 0; padding: 12px 15px; color: var(--muted); font-size: 12px; }
 .import-errors { margin-top: 18px; border: 1px solid var(--line); background: var(--panel); }
 .import-errors summary { padding: 12px 15px; cursor: pointer; color: var(--coral); font: 11px/1 var(--mono); }
 .import-errors > div { max-height: 260px; overflow: auto; padding: 0 15px 12px; }
@@ -204,6 +223,7 @@ td small { margin-top: 3px; color: var(--muted); font-size: 11px; }
   .metric-row { grid-template-columns: repeat(2, 1fr); }
   .metric-row > div:nth-child(2) { border-right: 0; }
   .metric-row > div:nth-child(-n + 2) { border-bottom: 1px solid var(--line); }
+  .metric-row > button:nth-child(4) { border-top: 1px solid var(--line); }
   .toolbar > .button { flex: 1 1 calc(50% - 6px); }
   .table-wrap { overflow-x: hidden; }
   table { min-width: 0; table-layout: fixed; }
@@ -229,6 +249,9 @@ td small { margin-top: 3px; color: var(--muted); font-size: 11px; }
   .title-sort select { min-height: 32px; }
   .column-filter summary, .title-sort select, .filter-bar > .text-button { min-height: 38px; }
   .field-grid, .detail-fields, .image-details-body { grid-template-columns: 1fr; }
+  .issue-entry { grid-template-columns: 1fr; gap: 8px; }
+  .issues-heading { align-items: start; flex-direction: column; gap: 8px; }
+  .issues-actions, .issues-subheading { align-items: flex-start; flex-direction: column; gap: 7px; }
   .source-line { align-items: flex-start; flex-direction: column; }
   .source-line .text-button { margin-top: 4px; }
   .import-hero { padding: 68px 0 60px; }

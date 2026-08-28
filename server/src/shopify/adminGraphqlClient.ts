@@ -2,7 +2,7 @@ import { config } from '../config.js';
 
 interface GraphqlResponse<T> {
   data?: T;
-  errors?: Array<{ message: string }>;
+  errors?: Array<{ message: string; extensions?: { code?: string } }>;
 }
 
 export class ShopifyAdminClient {
@@ -25,7 +25,7 @@ export class ShopifyAdminClient {
     );
     const payload = await response.json() as GraphqlResponse<T>;
     if (!response.ok) throw new Error(`Shopify returned HTTP ${response.status}.`);
-    if (payload.errors?.length) throw new Error(payload.errors.map((error) => error.message).join('; '));
+    if (payload.errors?.length) throw new Error(payload.errors.map((error) => error.extensions?.code ? `${error.message} [${error.extensions.code}]` : error.message).join('; '));
     if (!payload.data) throw new Error('Shopify returned no GraphQL data.');
     return payload.data;
   }

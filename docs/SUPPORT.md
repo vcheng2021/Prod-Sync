@@ -6,6 +6,8 @@ This runbook is for operators and maintainers of the local eComInt product works
 
 The application stores product data locally in SQLite. A database purge deletes local catalog state but does not delete Shopify products.
 
+> Last updated: 2026-08-28. The runbook covers the current API, issue-log, inventory, and reset behavior.
+
 ## 2. Prerequisites
 
 Local development requires:
@@ -36,7 +38,7 @@ SHOPIFY_API_VERSION=2026-07
 SHOPIFY_LOCATION_ID=gid://shopify/Location/...
 ```
 
-The Shopify app/token must have product read/write access and the inventory read/write access required by the selected Admin API operations. Confirm the location ID is the main store location where quantities should be set.
+The Shopify app/token must have `read_products`, `write_products`, `read_inventory`, and `write_inventory` access as required by the selected Admin API operations. The installing user must also have permission to update inventory items and activate inventory at the configured location. API version `2026-07` requires an `@idempotent` key on inventory activation and quantity mutations; the application adds those keys automatically. If scopes were added after the token was created, reauthorize or reinstall the app so the token receives the new scopes. Confirm the location ID is the main store location where quantities should be set.
 
 Useful local paths:
 
@@ -142,9 +144,13 @@ Edits are staged in the browser. The database is not updated for ordinary field 
 
 The Save operation sends only fields changed since the last load/save. A successful save clears the dirty indicator. A failed save leaves edits staged so the operator can retry. Source retrieval results and publish outcomes are written immediately because they are server operations.
 
-Suggested sale price is the Shopify retail price. Supplier unit price is not the retail price. Shopify inventory is separate from supplier SOH and is the absolute quantity sent to the configured Shopify location.
+The publish review uses the browser's current values. If the operator posts before pressing Save, the publish request includes every staged field change for the relevant products. The server applies those changes in a SQLite transaction before it reads the selected products, so manually edited title, prices, inventory, description, and About fields are the values sent to Shopify. Retrieval responses are merged with still-unsaved browser edits instead of replacing them.
+
+Suggested sale price is the Shopify variant retail price. Local unit price is written to the Shopify inventory item's `cost` field, shown in the admin as Cost per item. Shopify's variant `unitPrice` is calculated from measurement settings and is not a direct input value. Shopify inventory is separate from supplier SOH and is the absolute quantity sent to the configured Shopify location.
 
 Do not start a new import or close the browser with important unsaved changes.
+
+**Reset page** clears the visible draft, filters, selections, messages, modal state, issue records, and unsaved browser edits. It does not delete SQLite data. A later browser reload restores the persisted catalog. Use **Purge database** when the local catalog itself must be removed.
 
 ## 9. Source retrieval and publishing
 
@@ -156,7 +162,9 @@ Publishing requires selected and valid rows plus final confirmation. The review 
 - one match: update;
 - multiple matches: skip and require manual resolution.
 
-A Shopify failure is retained on the product and in publish history. Correct the row and retry. A failed local publish does not justify deleting a product from Shopify.
+A Shopify failure is retained on the product and in publish history. The **Posting issues** metric reads the newest failure records for the current draft from `GET /api/issues?draftId=<id>`, backed by `logs/ecomint.log`. Each record includes the event, timestamp, product ID when available, Shopify error text, GraphQL error code, and mutation field path. Product-linked records can be opened from the issue list to return to the product editor. Correct the row and retry. A failed local publish does not justify deleting a product from Shopify.
+
+Inventory publication first updates the inventory item's Cost per item from local unit price, activates the variant inventory item at the configured location when needed, then sends the editable Shopify inventory as an absolute available quantity. Activation and quantity mutations use unique idempotency keys. The token still needs `write_inventory`, and the installing user needs inventory-item and location permission.
 
 ## 10. Purge database
 
@@ -180,6 +188,8 @@ GET /api/health
 ```
 
 The physical event log is JSON Lines at `logs/ecomint.log` locally or `/app/logs/ecomint.log` in Docker. It records startup, seed/restore, imports, merges, Saves, retrieval, publishing, purge, validation, and failures.
+
+Use `GET /api/issues?draftId=<id>` or click the Posting issues metric in the workspace to read up to 100 newest failure entries for the current draft. The endpoint reads the log in reverse chronological order and returns structured details without raw request bodies or Shopify credentials.
 
 The logger redacts keys that look like tokens, secrets, passwords, authorization values, credentials, or cookies. Still treat logs as operational data. Do not add raw request bodies or Shopify responses to support tickets.
 
@@ -240,6 +250,10 @@ Check column B values, including leading zeroes and whitespace. The merge key is
 
 Keep the page open so staged edits are not lost. Check the API response and `product.save` failure event. Confirm the database volume is writable and that only supported editable fields are being submitted. Retry after the underlying error is resolved.
 
+### Posting issue details are missing
+
+Click the **Posting issues** metric. It loads failure records from `logs/ecomint.log` through `/api/issues?draftId=<id>`. If the list is empty, confirm that the selected draft ID matches the log entry and inspect the unfiltered log locally with `Get-Content logs/ecomint.log -Tail 100`. The product editor also shows the persisted `publishError` for the active row.
+
 ### Source retrieval fails
 
 Confirm the URL is HTTPS and its host is allowed by `SOURCE_URL_ALLOWLIST`. Check timeout, redirect, response-size, and content-type restrictions. Retry only for a checked row. Do not manually add supplier secrets to the browser.
@@ -250,7 +264,11 @@ Confirm `SHOPIFY_ADMIN_ACCESS_TOKEN`, `SHOPIFY_STORE_DOMAIN`, API version, and `
 
 ### Inventory does not update
 
-Confirm the editable Shopify inventory is a whole number at least zero and that the configured location ID belongs to the target store. The value sent is Shopify inventory, not supplier SOH. Check the inventory activation and quantity mutation errors.
+Confirm the editable Shopify inventory is a whole number at least zero and that the configured location ID belongs to the target store. The value sent is Shopify inventory, not supplier SOH. Local unit price is sent separately through `inventoryItemUpdate` as Shopify Cost per item. For `Access denied for inventoryActivate` or `Access denied for inventoryItemUpdate`, grant the app/token `write_inventory`, reauthorize the installation, and confirm the user can manage inventory at that location. For `The @idempotent directive is required`, rebuild/restart the server so the current publisher is running; API version `2026-07` requires the directive and the current implementation supplies a unique key. Check the issue log for the exact cost, activation, or quantity mutation error.
+
+### Reset page did not delete the catalog
+
+This is expected. Reset page is a non-destructive client reset that returns to the import screen while leaving SQLite, logs, and images intact. A startup or browser reload restores the saved catalog. Use Purge database and type `PURGE` only when local catalog state must be deleted.
 
 ### Images are missing
 

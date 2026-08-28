@@ -1,32 +1,30 @@
-# React + TypeScript + Vite
+# eComInt client
 
-This template provides a minimal setup to get React working in Vite with HMR and some Oxlint rules.
+The client is a React 19 single-page workspace bundled with Vite. The root project starts it with `npm run dev:client`; direct client commands use the `client` directory.
 
-Currently, two official plugins are available:
+## Responsibilities
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Oxc](https://oxc.rs)
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/)
+- `src/App.tsx` owns catalog selection, filtering, staged edits, source retrieval, publishing review, issue-log display, and Reset page state.
+- `src/api.ts` defines the browser-to-server JSON contracts. It contains no credentials or Shopify configuration.
+- `src/App.css` and `src/workspace.css` contain the application styling.
 
-## React Compiler
+Ordinary field edits update the local React draft and are collected by product ID in a dirty-field map. **Save changes** sends only changed allowlisted fields to `PATCH /api/drafts/:draftId/products`. Publishing sends the same staged changes with the selected product IDs so the server persists them before calling Shopify. The local suggested sale price maps to the Shopify variant retail `price`; local unit price maps to the Shopify inventory-item `cost` (“Cost per item”). Retrieval responses are merged with pending edits so source enrichment cannot overwrite a manual change that has not been saved yet.
 
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
+The **Posting issues** metric calls `GET /api/issues?draftId=...` and renders structured failure records from the server log. The **Reset page** action clears the client draft and transient UI state without calling the destructive database purge endpoint.
 
-## Expanding the Oxlint configuration
+## Development
 
-If you are developing a production application, we recommend enabling type-aware lint rules by installing `oxlint-tsgolint` and editing `.oxlintrc.json`:
-
-```json
-{
-  "$schema": "./node_modules/oxlint/configuration_schema.json",
-  "plugins": ["react", "typescript", "oxc"],
-  "options": {
-    "typeAware": true
-  },
-  "rules": {
-    "react/rules-of-hooks": "error",
-    "react/only-export-components": ["warn", { "allowConstantExport": true }]
-  }
-}
+```powershell
+npm install
+npm run dev:client
 ```
 
-See the [Oxlint rules documentation](https://oxc.rs/docs/guide/usage/linter/rules) for the full list of rules and categories.
+Vite proxies `/api` and `/productimage` requests to `http://localhost:8787`. Run the root server separately with `npm run dev:server`, or start both processes with `./start.ps1`. Validate the client with:
+
+```powershell
+npm run typecheck
+npm run build
+npm run lint
+```
+
+The client must never receive `SHOPIFY_ADMIN_ACCESS_TOKEN`; Shopify calls are made by the server.

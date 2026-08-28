@@ -6,6 +6,8 @@ eComInt is a single-instance internal product operations application. It imports
 
 The application is intentionally stateful. SQLite, the physical event log, and downloaded product images are application data and must be kept on persistent storage. The application is not designed for multiple server instances sharing one SQLite file.
 
+> Last updated: 2026-08-28. This document describes the implemented application behavior, not only the original build plan.
+
 ## 2. System context
 
 ```text
@@ -41,6 +43,8 @@ The browser never receives the Shopify Admin token. All supplier network request
 - submits only changed fields from the top Save button;
 - starts explicit source/image retrieval for checked rows;
 - shows publish review and confirmation;
+- opens current-draft failure records from the physical log through the Posting issues metric;
+- resets the visible workspace through Reset page without deleting persisted catalog data;
 - provides guarded database purge.
 
 `client/src/api.ts` contains the JSON API contract. It must not contain credentials or server-only configuration.
@@ -49,7 +53,7 @@ The browser never receives the Shopify Admin token. All supplier network request
 
 `server/src/index.ts` creates configuration, the logger, and the SQLite store before registering routes. It performs one-time startup seed/restore handling and serves the built client from `client/dist`.
 
-`server/src/routes/imports.ts` handles current-catalog loading, workbook upload and merge, bulk Save, purge, and source retrieval.
+`server/src/routes/imports.ts` handles current-catalog loading, workbook upload and merge, bulk Save, purge, source retrieval, and the log-backed issues endpoint.
 
 `server/src/routes/publishing.ts` handles export and confirmed publishing. Every product result is persisted before the response is returned.
 
@@ -85,9 +89,11 @@ Application-owned fields survive a matching workbook merge:
 - image/source retrieval state unless its source URL changed;
 - Shopify IDs, publish status, and publish error history.
 
-A new product gets a suggested sale price of `unit price * 1.25`, rounded to cents, when the unit price is valid. Its Shopify inventory defaults to `1` when supplier SOH is greater than `2`, otherwise `0`. Suggested sale price is the editable Shopify retail price. Unit price remains the supplier cost.
+A new product gets a suggested sale price of `unit price * 1.25`, rounded to cents, when the unit price is valid. Its Shopify inventory defaults to `1` when supplier SOH is greater than `2`, otherwise `0`. Suggested sale price is the editable Shopify retail price. Unit price remains the supplier cost locally and is written to the Shopify inventory item's `cost` field, displayed as Cost per item.
 
 If an existing suggested sale price still equals the previous automatic 25 percent calculation, a changed unit price recalculates it. Once the operator edits the suggested price, it is treated as an override and later workbooks do not replace it.
+
+Ordinary edits first exist in the browser dirty-field map. Save sends only the changed allowlisted fields. If the operator posts before pressing Save, the client includes those same changes in the publish request; the server applies them in SQLite before it reads the selected products for Shopify. This prevents the publisher from reading an older persisted sale price, inventory value, title, unit price, or content field. A retrieval response is merged with any still-pending browser edits so source enrichment does not replace an unsaved manual value.
 
 ## 5. Startup, seed, restore, and merge state machine
 
@@ -125,6 +131,10 @@ Returns a lightweight health response and does not call Shopify. Docker uses thi
 
 Returns the current `DraftResponse`, or `null` when the catalog is empty.
 
+### `GET /api/issues?draftId=<id>`
+
+Reads the newest failure entries from `logs/ecomint.log`. When `draftId` is supplied, only entries whose structured details belong to that draft are returned, with a maximum of 100 records. The client uses this endpoint when the operator opens the Posting issues metric; it does not expose Shopify credentials or raw request bodies.
+
 ### `POST /api/imports`
 
 Accepts an `.xlsx` multipart field named `workbook`. If the catalog is empty, it inserts the first catalog. Otherwise it merges by normalized column-B key. The response includes the current draft, worksheet metadata, row-level import errors, and added/updated/unchanged/invalid counts.
@@ -149,7 +159,19 @@ Requires the product to be selected. It fetches source details and downloads the
 
 ### `POST /api/drafts/:draftId/publish`
 
-Requires `confirmed: true` and product IDs. It publishes only selected products, checks Shopify GraphQL errors and mutation `userErrors`, and writes per-product publish outcomes.
+Requires `confirmed: true` and product IDs. It accepts an optional `changes` array in the same shape as the bulk Save endpoint:
+
+```json
+{
+  "confirmed": true,
+  "productIds": ["product-id"],
+  "changes": [
+    { "id": "product-id", "changes": { "suggestedSalePrice": 19.99, "inventoryQuantity": 4 } }
+  ]
+}
+```
+
+The server validates and persists `changes` before selecting products for publication. It publishes only selected products, checks Shopify transport errors and mutation `userErrors`, and writes per-product publish outcomes.
 
 ### `POST /api/database/purge`
 
@@ -165,17 +187,19 @@ Successful source details are sanitized before SQLite storage, browser display, 
 
 The publisher normalizes a title and queries Shopify. Exactly one title match updates the existing product, zero matches creates a product, and multiple matches skip automatic publication for manual resolution.
 
-The suggested sale price is sent as the main variant price. The supplier unit price is not used as the retail price. The publisher retrieves the variant inventory item ID, activates it at `SHOPIFY_LOCATION_ID` when necessary, and sets the absolute available quantity from the editable Shopify inventory field.
+The suggested sale price is sent as the main variant `price`; the supplier unit price is not used as the retail price. The publisher retrieves the variant inventory item ID, writes the supplier unit price to the inventory item's `cost` field, activates the item at `SHOPIFY_LOCATION_ID` when necessary, and sets the absolute available quantity from the editable Shopify inventory field. Shopify's variant `unitPrice` is calculated from `unitPriceMeasurement`, so this application does not assign that read-only calculated value.
 
-Publishing requires a server token and a configured location. Product mutations, variant mutations, inventory activation, inventory quantity updates, and media mutations all check returned `userErrors`. A partial failure remains retryable and is recorded in `publish_events`.
+Publishing requires a server token and a configured location. The inventory-item cost update, inventory activation, and inventory quantity mutations require inventory write access; API version `2026-07` also requires a unique `@idempotent(key: ...)` request key on the activation and quantity mutations. Product mutations, variant mutations, inventory-item cost updates, inventory activation, inventory quantity updates, and media mutations all check returned `userErrors`; GraphQL transport errors retain their extension code and mutation errors retain their field path when available. `write_inventory` and permission to manage the configured location are still required. A partial failure remains retryable and is recorded in `publish_events` and the physical log.
 
 ## 10. Logging and redaction
 
-The server appends structured JSON lines to `logs/ecomint.log` by default. Events include startup, seed, restore, merge, Save, retrieval, refresh, publish, purge, validation, and unexpected failures.
+The server appends structured JSON lines to `logs/ecomint.log` by default. Events include startup, seed, restore, merge, Save, retrieval, refresh, publish, purge, validation, and unexpected failures. `AppLogger.readIssues()` reads failure entries in reverse chronological order; `GET /api/issues` exposes at most the 100 newest matching entries to the browser for the Posting issues view.
 
 The logger redacts values whose keys contain token, secret, password, authorization, credential, or cookie. Request bodies and raw Shopify responses are not logged. Never add a token, cookie, full authorization header, or secret environment value to a log message.
 
 The `logs` directory is runtime state and is excluded from Git and the Docker build context. It is mounted separately in Docker so purge does not erase operational history.
+
+Reset page is client-only state management. It clears the visible draft, dirty edits, filters, selections, messages, modal state, and loaded issue records so the import screen is clean. It does not call purge and does not remove SQLite, log, or image data.
 
 ## 11. Docker architecture
 

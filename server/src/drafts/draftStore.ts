@@ -344,7 +344,7 @@ export class DraftStore {
       id: draft.id, filename: draft.filename, createdAt: draft.created_at, updatedAt: draft.updated_at,
       totalProducts: products.length, selectedProducts: products.filter((product) => product.selected).length,
       readyProducts: products.filter((product) => product.enrichment_status === 'ready').length,
-      failedProducts: products.filter((product) => product.publish_status === 'failed').length,
+      failedProducts: products.filter((product) => product.publish_status === 'failed' || product.publish_status === 'skipped').length,
     };
   }
 

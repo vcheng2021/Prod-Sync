@@ -25,6 +25,10 @@ interface VariantMutationResponse {
   inventorySetQuantities?: { userErrors: UserError[] };
 }
 
+interface InventoryItemMutationResponse {
+  inventoryItemUpdate?: { inventoryItem: { id: string; unitCost: { amount: string } | null } | null; userErrors: UserError[] };
+}
+
 interface MediaMutationResponse {
   productCreateMedia?: { media: Array<{ id: string }>; mediaUserErrors: UserError[] };
 }
@@ -74,7 +78,10 @@ export const findProductMatches = async (title: string): Promise<ProductMatch[]>
   return data.products.nodes.filter((product) => normalizeTitle(product.title) === normalizeTitle(title));
 };
 
-const mutationErrors = (errors: UserError[]): string => errors.map((error) => error.message).join('; ');
+const mutationErrors = (errors: UserError[]): string => errors.map((error) => {
+  const field = error.field?.length ? ` [${error.field.join('.')}]` : '';
+  return `${error.message}${field}`;
+}).join('; ');
 
 const updateVariantPrice = async (productId: string, variantId: string | undefined, price: number): Promise<void> => {
   if (!variantId) {
@@ -98,22 +105,36 @@ const updateVariantPrice = async (productId: string, variantId: string | undefin
   if (errors.length) throw new Error(mutationErrors(errors));
 };
 
+const updateInventoryItemCost = async (inventoryItemId: string | undefined, cost: number | null): Promise<void> => {
+  if (!inventoryItemId) throw new Error('Shopify did not return a variant inventory item for unit cost.');
+  const result = await shopifyAdminClient.request<InventoryItemMutationResponse>(
+    `mutation UpdateInventoryItemCost($id: ID!, $input: InventoryItemInput!) {
+      inventoryItemUpdate(id: $id, input: $input) { inventoryItem { id unitCost { amount } } userErrors { field message } }
+    }`,
+    { id: inventoryItemId, input: { cost: cost === null ? null : Number(cost.toFixed(2)) } },
+  );
+  const mutation = result.inventoryItemUpdate;
+  if (!mutation) throw new Error('Shopify returned no inventory item cost update result.');
+  if (mutation.userErrors.length) throw new Error(mutationErrors(mutation.userErrors));
+  if (!mutation.inventoryItem) throw new Error('Shopify did not return the updated inventory item cost.');
+};
+
 const updateInventory = async (inventoryItemId: string | undefined, quantity: number): Promise<void> => {
   if (!config.shopifyLocationId) throw new Error('Shopify inventory is not configured. Set SHOPIFY_LOCATION_ID in .env.');
   if (!inventoryItemId) throw new Error('Shopify did not return a variant inventory item.');
   const activation = await shopifyAdminClient.request<VariantMutationResponse>(
-    `mutation ActivateInventory($inventoryItemId: ID!, $locationId: ID!, $available: Int!) {
-      inventoryActivate(inventoryItemId: $inventoryItemId, locationId: $locationId, available: $available) { userErrors { field message } }
+    `mutation ActivateInventory($inventoryItemId: ID!, $locationId: ID!, $available: Int!, $idempotencyKey: String!) {
+      inventoryActivate(inventoryItemId: $inventoryItemId, locationId: $locationId, available: $available) @idempotent(key: $idempotencyKey) { userErrors { field message } }
     }`,
-    { inventoryItemId, locationId: config.shopifyLocationId, available: quantity },
+    { inventoryItemId, locationId: config.shopifyLocationId, available: quantity, idempotencyKey: crypto.randomUUID() },
   );
   const activationErrors = activation.inventoryActivate?.userErrors ?? [];
   const blockingActivationErrors = activationErrors.filter((error) => !error.message.toLocaleLowerCase().includes('already active'));
   if (blockingActivationErrors.length) throw new Error(mutationErrors(blockingActivationErrors));
 
   const result = await shopifyAdminClient.request<VariantMutationResponse>(
-    `mutation SetInventory($input: InventorySetQuantitiesInput!) {
-      inventorySetQuantities(input: $input) { userErrors { field message } }
+    `mutation SetInventory($input: InventorySetQuantitiesInput!, $idempotencyKey: String!) {
+      inventorySetQuantities(input: $input) @idempotent(key: $idempotencyKey) { userErrors { field message } }
     }`,
     {
       input: {
@@ -122,6 +143,7 @@ const updateInventory = async (inventoryItemId: string | undefined, quantity: nu
         referenceDocumentUri: 'ecomint://product-sync',
         quantities: [{ inventoryItemId, locationId: config.shopifyLocationId, quantity }],
       },
+      idempotencyKey: crypto.randomUUID(),
     },
   );
   const errors = result.inventorySetQuantities?.userErrors ?? [];
@@ -200,6 +222,7 @@ export const publishProduct = async (product: ProductDraft): Promise<ProductPubl
     }
 
     await updateVariantPrice(shopifyProductId, variantId, product.suggestedSalePrice);
+    await updateInventoryItemCost(inventoryItemId, product.unitPrice);
     await updateInventory(inventoryItemId, product.inventoryQuantity);
     if (action === 'created') await addImage(shopifyProductId, product);
     return { status: 'published', action, shopifyProductId, matchCount: matches.length, error: '' };

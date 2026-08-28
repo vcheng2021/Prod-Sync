@@ -52,6 +52,13 @@ export interface DraftResponse {
   products: ProductDraft[];
 }
 
+export interface LogIssue {
+  timestamp: string;
+  event: string;
+  outcome: 'failure';
+  details: Record<string, unknown>;
+}
+
 interface ImportResponse extends DraftResponse {
   sheetName: string;
   headers: string[];
@@ -82,6 +89,8 @@ export const importWorkbook = async (file: File): Promise<ImportResponse> => {
 
 export const getCurrentDraft = (): Promise<DraftResponse | null> => requestJson<DraftResponse | null>('/api/drafts/current');
 
+export const getIssueLog = (draftId?: string): Promise<LogIssue[]> => requestJson<LogIssue[]>(draftId ? `/api/issues?draftId=${encodeURIComponent(draftId)}` : '/api/issues');
+
 export const getDraft = (draftId: string): Promise<DraftResponse> => requestJson<DraftResponse>(`/api/drafts/${draftId}`);
 
 export const updateProduct = (draftId: string, productId: string, patch: Partial<ProductDraft>): Promise<ProductDraft> =>
@@ -111,11 +120,11 @@ export const refreshProduct = (draftId: string, productId: string): Promise<Prod
 export const retrieveProduct = (draftId: string, productId: string): Promise<ProductDraft> =>
   requestJson<ProductDraft>(`/api/drafts/${draftId}/products/${productId}/retrieve`, { method: 'POST' });
 
-export const publishProducts = (draftId: string, productIds: string[]): Promise<{ results: Array<{ productId: string; status: PublishStatus; error: string }>; draft: DraftResponse }> =>
+export const publishProducts = (draftId: string, productIds: string[], changes: Array<{ id: string; changes: Partial<ProductDraft> }> = []): Promise<{ results: Array<{ productId: string; status: PublishStatus; error: string }>; draft: DraftResponse }> =>
   requestJson(`/api/drafts/${draftId}/publish`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ confirmed: true, productIds }),
+    body: JSON.stringify({ confirmed: true, productIds, changes }),
   });
 
 export const exportDraftUrl = (draftId: string): string => `/api/drafts/${draftId}/export`;

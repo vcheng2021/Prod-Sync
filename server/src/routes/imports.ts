@@ -44,6 +44,16 @@ export const createImportRouter = (store: DraftStore, logger: AppLogger): Router
     }
   });
 
+  router.get('/api/issues', (request, response, next) => {
+    try {
+      const draftId = typeof request.query.draftId === 'string' ? request.query.draftId : undefined;
+      const issues = logger.readIssues().filter((issue) => !draftId || issue.details.draftId === draftId).slice(0, 100);
+      return response.json(issues);
+    } catch (error) {
+      return next(error);
+    }
+  });
+
   router.get('/api/drafts/:draftId', (request, response, next) => {
     try {
       return response.json(store.getDraft(request.params.draftId));

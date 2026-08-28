@@ -1,4 +1,4 @@
-FROM node:20-bookworm-slim AS builder
+FROM node:22-bookworm-slim AS builder
 
 WORKDIR /app
 
@@ -9,7 +9,7 @@ COPY server/tsconfig.json ./server/
 RUN apt-get update \
   && apt-get install --no-install-recommends -y python3 make g++ \
   && npm ci \
-  && npm install --prefix client \
+  && npm ci --prefix client \
   && rm -rf /var/lib/apt/lists/*
 
 COPY client ./client
@@ -18,7 +18,7 @@ COPY suppliers ./suppliers
 
 RUN npm run build
 
-FROM node:20-bookworm-slim AS runtime
+FROM node:22-bookworm-slim AS runtime
 
 ENV NODE_ENV=production
 ENV PORT=8787
