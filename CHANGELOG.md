@@ -1,5 +1,37 @@
 # eComInt Change History
 
+## 2026-08-29 — VIC-1
+
+### JIRA VIC-1 — Centralized port configuration
+
+- All application ports are now configurable via a single `.env` file: `PORT` (Express API server, default `8787`), `HOST_PORT` (Docker host-facing port, default matches `PORT`), and `VITE_DEV_PORT` (Vite dev server, default `5173`).
+- `client/vite.config.ts` now loads the project-root `.env` and uses `PORT` as the proxy target instead of a hardcoded `8787`.
+- `docker-compose.yml` reads `PORT` and `HOST_PORT` from `.env` for the container environment, port mapping, and healthcheck (previously hardcoded `8787`).
+- `Dockerfile` `HEALTHCHECK` now reads `process.env.PORT` instead of hardcoding `8787`.
+- `start.ps1` and `stop.ps1` both parse `.env` to determine `PORT` and `VITE_DEV_PORT` for availability checks and health probing.
+- Updated `.env.example`, `CLAUDE.md`, `README.md`, `client/README.md`, `docs/ARCHITECTURE.md`, and `docs/SUPPORT.md` to reflect the centralized, `.env`-driven port configuration.
+- Verified: `npm run typecheck` passes; `./start.ps1` starts API on `PORT` (8002) and Vite on `VITE_DEV_PORT` (5173) with both health endpoints responding `200`; `docker compose config` resolves `PORT=8002` and the dynamic healthcheck correctly.
+
+## 2026-08-28 — VIC-3
+
+### JIRA VIC-3 — Featured product flag and Shopify collection
+
+- Added a **Featured** checkbox to the product details editor panel. When checked, the product is added to a Shopify custom collection on publish.
+- The `featured` flag is app-owned: stored as `is_featured` in the `products` table (with a backward-compatible migration), preserved across workbook merges, and staged in the client dirty-field map before Save.
+- Added `FEATURED_COLLECTION_TITLE` and `FEATURED_COLLECTION_HANDLE` constants and four new functions in `productPublisher.ts`: `resolveFeaturedCollectionId`, `addProductToCollection`, `removeProductFromCollection`, and `manageFeaturedCollection`.
+- The featured collection is resolved from the optional `SHOPIFY_FEATURED_COLLECTION_ID` environment variable, falling back to a handle-based lookup (`featured-collection`) with auto-creation if absent.
+- `collectCreate` and `collectDelete` mutations are idempotent: existing collects are checked before creation, and removal only targets the matching collect.
+- Collection-management failures are caught and appended to the publish result's error string without changing the product's publish status from `published`.
+- Updated `docs/ARCHITECTURE.md`, `docs/SUPPORT.md`, `IMPLEMENTATION_PLAN.md`, `.env.example`, and `docker-compose.yml`.
+
+## 2026-08-28 — VIC-2
+
+### JIRA VIC-2 — Table view and toolbar
+
+- Added a **Sale price** column to the product table. Each row displays the product's suggested sale price, which is either app-calculated (`unit price × 1.25`) on import or a manually overridden value preserved across workbook merges.
+- Moved the **Export all data** button from the workspace heading into the top toolbar, adjacent to the **Reset page** button.
+- Updated `CHANGELOG.md` to record these changes.
+
 ## 2026-08-28
 
 ### Bug fixes

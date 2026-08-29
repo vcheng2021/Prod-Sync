@@ -141,6 +141,7 @@ export const parseWorkbook = (buffer: Buffer, draftId: string): ParsedWorkbook =
       shopifyMatchCount: null,
       validationErrors,
       raw: rawColumns(row, headers),
+      featured: false,
     });
 
     if (validationErrors.length > 0) {

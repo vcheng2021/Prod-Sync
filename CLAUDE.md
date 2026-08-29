@@ -34,7 +34,7 @@ Windows PowerShell is the primary shell on this machine.
 | Task | Command |
 |---|---|
 | Install deps (root + client) | `npm install`; `npm install --prefix client` |
-| Dev (full stack) | `./start.ps1` — server `:8787`, Vite client `:5173` |
+| Dev (full stack) | `./start.ps1` — API server on `PORT` (default 8787), Vite client on `VITE_DEV_PORT` (default 5173) |
 | Dev (server only) | `npm run dev:server` → `tsx watch server/src/index.ts` |
 | Dev (client only) | `npm run dev:client` → `npm --prefix client run dev` |
 | Stop dev processes | `./stop.ps1` |
@@ -44,11 +44,11 @@ Windows PowerShell is the primary shell on this machine.
 | Run built server | `npm start` (after `npm run build`) |
 | Build Docker image | `docker build -t ecomint:latest .` |
 | Run via Compose | `docker compose up -d --build` |
-| Health check | `Invoke-WebRequest http://localhost:8787/api/health` |
+| Health check | `Invoke-WebRequest http://localhost:<PORT>/api/health` (default `8787`) |
 
 There is **no test script** — the package.json has no `test` target and no test framework is installed. Validation is described as operational checks in `IMPLEMENTATION_PLAN.md` (§12) and `docs/SUPPORT.md` (§14).
 
-The client proxies `/api` and `/productimage` to `http://localhost:8787` (see `client/vite.config.ts`), so a running server is required when developing the client alone.
+The client proxies `/api` and `/productimage` to `http://localhost:<PORT>` (see `client/vite.config.ts`), so a running server is required when developing the client alone. All ports are configurable via `.env` (see `.env.example`).
 
 ## Architecture
 
@@ -62,7 +62,7 @@ The client proxies `/api` and `/productimage` to `http://localhost:8787` (see `c
 3. The default workbook is a **first-run seed, not a recurring sync**. After a purge, the marker stays set, so restarting leaves the catalog empty — import explicitly.
 
 **Key modules:**
-- `config.ts` — all server config comes from `.env` (loaded via `dotenv`). Never hardcode paths, timeouts, the Shopify token, or the URL allowlist in code. Defaults: port 8787, `./data/ecomint.db`, `./logs`, `./productimage`.
+- `config.ts` — all server config comes from `.env` (loaded via `dotenv`). Never hardcode paths, timeouts, the Shopify token, or the URL allowlist in code. Defaults: port 8787 (`PORT`), `./data/ecomint.db`, `./logs`, `./productimage`.
 - `imports.ts` router — upload/merge, current draft, issues log reader, single-product patch, **bulk Save**, purge, retrieve, refresh.
 - `publishing.ts` router — XLSX export and confirmed publish.
 - `draftStore.ts` — owns schema creation, column migrations, the workbook merge transaction, dirty-field updates (allowlisted fields only), enrichment/image/publish result persistence, cache, and purge. Uses WAL mode.
@@ -116,7 +116,7 @@ All UI state lives in `App.tsx`. Ordinary field edits are staged in a **dirty-fi
 
 ## Local development
 
-`start.ps1` launches both the Vite dev server (5173) and the Express server with `tsx watch` (8787), tracking PIDs in `.ecomint/processes.json` and writing stdout/stderr to `.ecomint/logs/`. `stop.ps1` walks the process tree and kills them. Ports 5173 and 8787 must be free; the script throws if either is occupied.
+`start.ps1` launches both the Vite dev server (`VITE_DEV_PORT`, default 5173) and the Express server (`PORT`, default 8787), tracking PIDs in `.ecomint/processes.json` and writing stdout/stderr to `.ecomint/logs/`. `stop.ps1` walks the process tree and kills them. Both scripts read `.env` to determine port availability; the scripts throw if either port is occupied.
 
 Run `npm run typecheck` before committing — it checks both the server and the client. `npm run build` produces `client/dist` and `server/dist` for the production server (`npm start`) or Docker.
 

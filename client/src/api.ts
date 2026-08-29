@@ -36,6 +36,7 @@ export interface ProductDraft {
   shopifyMatchCount: number | null;
   validationErrors: string[];
   raw: Record<string, unknown>;
+  featured: boolean;
 }
 
 export interface DraftResponse {

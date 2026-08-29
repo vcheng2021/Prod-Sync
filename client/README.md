@@ -19,7 +19,7 @@ npm install
 npm run dev:client
 ```
 
-Vite proxies `/api` and `/productimage` requests to `http://localhost:8787`. Run the root server separately with `npm run dev:server`, or start both processes with `./start.ps1`. Validate the client with:
+Vite proxies `/api` and `/productimage` requests to `http://localhost:<PORT>` (default `8787`), driven by the `PORT` variable in the root `.env`. Run the root server separately with `npm run dev:server`, or start both processes with `./start.ps1`. Validate the client with:
 
 ```powershell
 npm run typecheck

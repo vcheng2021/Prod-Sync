@@ -148,6 +148,113 @@ function ThemeToggle() {
   )
 }
 
+function BackgroundSettings() {
+  const [customBg, setCustomBg] = useState<string | null>(() =>
+    localStorage.getItem('ecomint-bg'),
+  )
+  const [showSettings, setShowSettings] = useState(false)
+  const { showToast } = useToast()
+
+  const applyBg = (dataUrl: string) => {
+    document.body.style.background =
+      'linear-gradient(rgba(0, 0, 0, 0.15), rgba(0, 0, 0, 0.15)), url("' +
+      dataUrl +
+      '") no-repeat center/cover fixed'
+  }
+
+  const handleUpload = (event: ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0]
+    if (!file) return
+    if (!file.type.startsWith('image/')) {
+      showToast('error', 'Please select an image file (PNG, JPG, etc.).')
+      return
+    }
+    event.target.value = ''
+    const reader = new FileReader()
+    reader.onload = () => {
+      const dataUrl = reader.result
+      if (typeof dataUrl === 'string') {
+        localStorage.setItem('ecomint-bg', dataUrl)
+        setCustomBg(dataUrl)
+        applyBg(dataUrl)
+        setShowSettings(false)
+        showToast('success', 'Background image applied.')
+      }
+    }
+    reader.readAsDataURL(file)
+  }
+
+  const clearBg = () => {
+    document.body.style.background = ''
+    localStorage.removeItem('ecomint-bg')
+    setCustomBg(null)
+    showToast('info', 'Background image cleared.')
+  }
+
+  return (
+    <>
+      <button
+        type="button"
+        className="button button-quiet"
+        onClick={() => setShowSettings(true)}
+        aria-label="Change background image"
+        title="Change background image"
+      >
+        🎨
+      </button>
+      {showSettings && (
+        <div className="modal-backdrop" role="presentation">
+          <section
+            className="review-modal"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="bg-title"
+          >
+            <div className="eyebrow">BACKGROUND</div>
+            <h2 id="bg-title">Background image</h2>
+            <p style={{ color: 'var(--muted)', fontSize: '14px', lineHeight: 1.5, marginTop: 0 }}>
+              Upload an image to use as the workspace background. A subtle overlay keeps content readable.
+            </p>
+            <div
+              className="bg-preview"
+              style={customBg ? { backgroundImage: `url("${customBg}")` } : undefined}
+            >
+              {!customBg && 'No image set'}
+            </div>
+            <div className="bg-upload-row">
+              <label className="bg-upload-label">
+                <input type="file" accept="image/*" onChange={handleUpload} />
+                Choose image file
+              </label>
+              {customBg && (
+                <button
+                  type="button"
+                  className="button button-danger"
+                  onClick={clearBg}
+                >
+                  Clear
+                </button>
+              )}
+            </div>
+            <p className="bg-note">
+              Image is stored locally in your browser and applies to this workspace only.
+            </p>
+            <div className="modal-actions">
+              <button
+                type="button"
+                className="button button-secondary"
+                onClick={() => setShowSettings(false)}
+              >
+                Close
+              </button>
+            </div>
+          </section>
+        </div>
+      )}
+    </>
+  )
+}
+
 function AppContent() {
   const { showToast } = useToast()
   const [draft, setDraft] = useState<DraftResponse | null>(null)
@@ -677,6 +784,7 @@ function AppContent() {
           </div>
           <div className="header-actions">
             <ThemeToggle />
+            <BackgroundSettings />
             {readiness && (
               <span
                 className={`connection-pill ${readiness.shopifyConfigured ? 'connected' : 'disconnected'}`}
@@ -760,6 +868,7 @@ function AppContent() {
         </div>
         <div className="header-actions">
           <ThemeToggle />
+          <BackgroundSettings />
           {readiness && (
             <span
               className={`connection-pill ${readiness.shopifyConfigured ? 'connected' : 'disconnected'}`}
@@ -792,6 +901,13 @@ function AppContent() {
           >
             Reset page
           </button>
+          <a
+            className="button button-secondary"
+            href={exportDraftUrl(draft.draft.id)}
+            download
+          >
+            Export all data
+          </a>
           <button
             type="button"
             className="button button-danger"
@@ -831,13 +947,6 @@ function AppContent() {
             <span>Issues</span><strong className={draft.draft.failedProducts ? 'metric-alert' : ''}>{draft.draft.failedProducts.toLocaleString()}</strong>
           </button>
         </div>
-        <a
-          className="button button-secondary"
-          href={exportDraftUrl(draft.draft.id)}
-          download
-        >
-          Export all data
-        </a>
       </section>
 
       {/* ── Toolbar ── */}
@@ -968,6 +1077,7 @@ function AppContent() {
                   </th>
                   <th>Product</th>
                   <th>Unit / case</th>
+                  <th>Sale price</th>
                   <th>Stock</th>
                   <th>Source</th>
                   <th>Shopify</th>
@@ -1020,6 +1130,7 @@ function AppContent() {
                       <strong>{money(product.unitPrice)}</strong>
                       <small>{money(product.casePrice)} case</small>
                     </td>
+                    <td><strong>{money(product.suggestedSalePrice)}</strong></td>
                     <td>{product.stockOnHand ?? '—'}</td>
                     <td>{renderStatus(product.enrichmentStatus)}</td>
                     <td>{renderStatus(product.publishStatus)}</td>
@@ -1123,6 +1234,28 @@ function AppContent() {
                 >
                   {retrieveLabel(activeProduct)}
                 </button>
+              </div>
+
+              <div
+                className={`featured-row ${'featured' in (dirtyFieldsFor(activeProduct.id) ?? {}) ? 'dirty' : ''}`}
+              >
+                <label>
+                  <input
+                    type="checkbox"
+                    checked={activeProduct.featured}
+                    onChange={(event) =>
+                      patchProduct(activeProduct.id, {
+                        featured: event.target.checked,
+                      })
+                    }
+                    aria-label="Flag as featured"
+                  />
+                  <span>Featured</span>
+                </label>
+                <small>
+                  When published, the product is added to the Featured Collection
+                  on Shopify.
+                </small>
               </div>
 
               {/* ── About this product ── */}

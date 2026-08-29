@@ -12,7 +12,7 @@ npm install --prefix client
 ./start.ps1
 ```
 
-Open `http://127.0.0.1:5173`. Stop local processes with `./stop.ps1`.
+Open `http://localhost:5173` (Vite dev server port, configurable via `VITE_DEV_PORT` in `.env`). Stop local processes with `./stop.ps1`.
 
 The server persists its catalog in SQLite, writes operational events to `logs/ecomint.log`, and stores downloaded images in `productimage`. Copy `.env.example` to `.env` and configure Shopify credentials and `SHOPIFY_LOCATION_ID` before publishing. The Shopify token is server-only and must have product and inventory permissions.
 
@@ -38,10 +38,10 @@ The product table and details editor expand full-height to the browser viewport.
 docker compose up -d --build
 ```
 
-Open `http://localhost:8787`. Check health with:
+Open `http://localhost:8787` (or your `HOST_PORT` from `.env`). Check health with:
 
 ```powershell
-Invoke-WebRequest http://localhost:8787/api/health
+Invoke-WebRequest http://localhost:$env:HOST_PORT/api/health
 docker compose ps
 ```
 

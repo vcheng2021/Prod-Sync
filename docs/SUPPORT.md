@@ -38,6 +38,14 @@ SHOPIFY_API_VERSION=2026-07
 SHOPIFY_LOCATION_ID=gid://shopify/Location/...
 ```
 
+Optional for featured-collection publishing:
+
+```text
+SHOPIFY_FEATURED_COLLECTION_ID=gid://shopify/Collection/...
+```
+
+When `SHOPIFY_FEATURED_COLLECTION_ID` is provided, products flagged as **Featured** in the editor are added to that collection on publish. When omitted, the publisher searches for a custom collection with handle `featured-collection` and creates one named "Featured Collection" if it does not exist.
+
 The Shopify app/token must have `read_products`, `write_products`, `read_inventory`, and `write_inventory` access as required by the selected Admin API operations. The installing user must also have permission to update inventory items and activate inventory at the configured location. API version `2026-07` requires an `@idempotent` key on inventory activation and quantity mutations; the application adds those keys automatically. If scopes were added after the token was created, reauthorize or reinstall the app so the token receives the new scopes. Confirm the location ID is the main store location where quantities should be set.
 
 Useful local paths:
@@ -65,7 +73,7 @@ For development on Windows:
 ./start.ps1
 ```
 
-Open `http://127.0.0.1:5173`. The API health endpoint is `http://127.0.0.1:8787/api/health`.
+Open `http://127.0.0.1:<VITE_DEV_PORT>` (default 5173). The API health endpoint is `http://127.0.0.1:<PORT>/api/health` (default 8787). Both ports are configurable via `.env`.
 
 Stop the local processes with:
 
@@ -91,10 +99,10 @@ Start the application:
 docker compose up -d --build
 ```
 
-Open `http://localhost:8787` and check health:
+Open `http://localhost:<HOST_PORT>` (default 8787, configurable via `.env`) and check health:
 
 ```powershell
-Invoke-WebRequest http://localhost:8787/api/health
+Invoke-WebRequest http://localhost:$env:HOST_PORT/api/health
 
 docker compose ps
 ```
@@ -163,6 +171,8 @@ Publishing requires selected and valid rows plus final confirmation. The review 
 - multiple matches: skip and require manual resolution.
 
 In addition to price, cost, and inventory, the publisher maps the app `brand` to the Shopify product `vendor`, the app `productType` to the Shopify `productType`, and derives Shopify `tags` from a non-empty subset of the `brand`, `productType`, and `country` fields. These are standard `Product` attributes covered by the existing `write_products` scope; no additional Shopify permissions are required.
+
+When the editor **Featured** checkbox is set, the publisher adds the product to a Shopify custom collection on publish, or removes it when unchecked on a subsequent publish. The collection is resolved from `SHOPIFY_FEATURED_COLLECTION_ID`, falling back to a handle-based lookup that auto-creates `featured-collection` if absent. Collection-management errors are reported in the posting issues but do not fail the product publish itself.
 
 A Shopify failure is retained on the product and in publish history. The **Posting issues** metric reads the newest failure records for the current draft from `GET /api/issues?draftId=<id>`, backed by `logs/ecomint.log`. Each record includes the event, timestamp, product ID when available, Shopify error text, GraphQL error code, and mutation field path. Product-linked records can be opened from the issue list to return to the product editor. Correct the row and retry. A failed local publish does not justify deleting a product from Shopify.
 
@@ -234,7 +244,7 @@ Schema changes are applied when `DraftStore` starts. Do not run two application 
 
 ### The page is blank or does not load
 
-Check `docker compose ps` and `/api/health`. Inspect container logs. For local development, confirm the client is on port 5173 and the server is on port 8787. Rebuild if `client/dist` or `server/dist` is stale.
+Check `docker compose ps` and `/api/health`. Inspect container logs. For local development, confirm the client is on `VITE_DEV_PORT` (default 5173) and the server is on `PORT` (default 8787). Rebuild if `client/dist` or `server/dist` is stale.
 
 ### The catalog is empty after restart
 
@@ -263,6 +273,10 @@ Confirm the URL is HTTPS and its host is allowed by `SOURCE_URL_ALLOWLIST`. Chec
 ### Shopify publishing fails
 
 Confirm `SHOPIFY_ADMIN_ACCESS_TOKEN`, `SHOPIFY_STORE_DOMAIN`, API version, and `SHOPIFY_LOCATION_ID` are set in the container runtime environment. Confirm the token scopes and location. Inspect the saved publish error and redacted log event. Multiple title matches require manual resolution.
+
+### Featured product is not in the collection
+
+Confirm `SHOPIFY_FEATURED_COLLECTION_ID` is set if you want to target a specific collection. When unset, the publisher auto-creates or searches for a collection with handle `featured-collection`. Check the posting issues for a collection-management error on the affected product. The product itself publishes normally even if collection linking fails; retry after correcting the collection ID or Shopify scopes.
 
 ### Inventory does not update
 
