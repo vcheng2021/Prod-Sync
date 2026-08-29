@@ -8,6 +8,17 @@
   </head>
   <body>
     <div id="root"></div>
+    <script>
+      (function () {
+        var bg = localStorage.getItem('ecomint-bg');
+        if (bg) {
+          document.body.style.background =
+            'linear-gradient(rgba(0, 0, 0, 0.15), rgba(0, 0, 0, 0.15)), url("' +
+            bg +
+            '") no-repeat center/cover fixed';
+        }
+      })();
+    </script>
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>

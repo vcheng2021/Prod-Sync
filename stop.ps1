@@ -1,8 +1,18 @@
 $ErrorActionPreference = 'SilentlyContinue'
 
 $projectRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
+
+# Load .env so this script checks the same ports as start.ps1
+Get-Content (Join-Path $projectRoot '.env') -ErrorAction SilentlyContinue | ForEach-Object {
+  if ($_ -match '^\s*([^#][^=]*?)\s*=\s*(.*)$') {
+    Set-Item -Path "env:$($matches[1].Trim())" -Value $matches[2].Trim()
+  }
+}
+
 $statePath = Join-Path (Join-Path $projectRoot '.ecomint') 'processes.json'
-$applicationPorts = @(5173, 8787)
+$apiPort = if ($env:PORT) { [int]$env:PORT } else { 8787 }
+$clientPort = if ($env:VITE_DEV_PORT) { [int]$env:VITE_DEV_PORT } else { 5173 }
+$applicationPorts = @($clientPort, $apiPort)
 
 if (-not (Test-Path $statePath)) {
   $occupiedPorts = foreach ($port in $applicationPorts) {

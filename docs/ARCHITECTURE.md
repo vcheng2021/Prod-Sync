@@ -67,7 +67,7 @@ The client uses a single-file `App.tsx` with styling in `workspace.css`. The wor
 
 `server/src/enrichment/` validates supplier URLs, fetches approved source data, sanitizes HTML, and downloads images only after an operator requests retrieval for a selected row.
 
-`server/src/shopify/` owns Admin GraphQL calls, title matching, product create/update, variant price updates, and inventory quantity updates.
+`server/src/shopify/` owns Admin GraphQL calls, title matching, product create/update, variant price updates, inventory quantity updates, and featured-collection (custom collection + collect) management.
 
 ## 4. Product identity and field ownership
 
@@ -90,6 +90,7 @@ Application-owned fields survive a matching workbook merge:
 - manually edited suggested sale price;
 - description and manually edited enrichment fields;
 - selection state;
+- featured flag (app-controlled, preserved across workbook merges);
 - image/source retrieval state unless its source URL changed;
 - Shopify IDs, publish status, and publish error history.
 
@@ -195,6 +196,15 @@ The suggested sale price is sent as the main variant `price`; the supplier unit 
 
 Publishing requires a server token and a configured location. The inventory-item cost update, inventory activation, and inventory quantity mutations require inventory write access; API version `2026-07` also requires a unique `@idempotent(key: ...)` request key on the activation and quantity mutations. Product mutations, variant mutations, inventory-item cost updates, inventory activation, inventory quantity updates, and media mutations all check returned `userErrors`; GraphQL transport errors retain their extension code and mutation errors retain their field path when available. `write_inventory` and permission to manage the configured location are still required. A partial failure remains retryable and is recorded in `publish_events` and the physical log.
 
+### Featured Collection
+
+When a product has its `featured` flag set, the publisher manages a Shopify custom collection so the product appears in it. The collection is resolved as follows:
+
+- If `SHOPIFY_FEATURED_COLLECTION_ID` is set in configuration, that collection ID is used directly;
+- otherwise the publisher queries for a custom collection with handle `featured-collection`, creating a "Featured Collection" if none exists.
+
+On each publish, the publisher adds the product to the collection via `collectCreate` (checking for an existing collect first to avoid duplicates) when `featured` is true, or removes it via `collectDelete` when false. Collection-management failures are caught and reported in the product's publish error string but do not change a successful product publish status. The `read_products` and `write_products` scopes cover these collection and collect mutations; no additional Shopify permissions are required.
+
 ## 10. Logging and redaction
 
 The server appends structured JSON lines to `logs/ecomint.log` by default. Events include startup, seed, restore, merge, Save, retrieval, refresh, publish, purge, validation, and unexpected failures. `AppLogger.readIssues()` reads failure entries in reverse chronological order; `GET /api/issues` exposes at most the 100 newest matching entries to the browser for the Posting issues view.
@@ -221,7 +231,7 @@ The runtime container uses these persistent paths:
 | `/app/productimage` | downloaded images | Yes |
 | `/app/suppliers` | read-only seed workbook in image | No |
 
-`docker-compose.yml` mounts named volumes for the three state paths, exposes port 8787, and checks `/api/health`. This is a single-instance deployment. Do not run two application containers against the same SQLite volume.
+`docker-compose.yml` mounts named volumes for the three state paths, exposes the `PORT` value (default 8787, overridden by `HOST_PORT` on the host), and checks `/api/health`. This is a single-instance deployment. Do not run two application containers against the same SQLite volume.
 
 Secrets are runtime environment variables. The real `.env` file, database, logs, and images are excluded from the image.
 
@@ -229,7 +239,7 @@ Secrets are runtime environment variables. The real `.env` file, database, logs,
 
 Important server variables are:
 
-- `PORT`: HTTP port, default `8787`;
+- `PORT`: HTTP port (API server and Docker container-internal), default `8787`. Override with `HOST_PORT` for the Docker host-facing port;
 - `DATABASE_PATH`: SQLite path, default `./data/ecomint.db`;
 - `PRODUCT_IMAGE_DIRECTORY`: image directory, default `./productimage`;
 - `LOG_DIRECTORY`: log directory, default `./logs`;
@@ -237,6 +247,7 @@ Important server variables are:
 - `SHOPIFY_ADMIN_ACCESS_TOKEN`;
 - `SHOPIFY_API_VERSION`;
 - `SHOPIFY_LOCATION_ID`;
+- `SHOPIFY_FEATURED_COLLECTION_ID` (optional — the Shopify collection ID to use for featured products; when unset, the publisher searches for or creates a collection with handle `featured-collection`);
 - source allowlist, timeout, redirect, response-size, image-size, and concurrency settings.
 
 Use `.env.example` as the key reference. The real `.env` is never committed.

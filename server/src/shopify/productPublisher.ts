@@ -33,6 +33,22 @@ interface MediaMutationResponse {
   productCreateMedia?: { media: Array<{ id: string }>; mediaUserErrors: UserError[] };
 }
 
+interface FeaturedCollectionLookup {
+  collections: { nodes: Array<{ id: string }> };
+}
+
+interface CollectionMutationResponse {
+  collectionCreate?: { userErrors: UserError[]; collection: { id: string } | null };
+}
+
+interface CollectionAddResponse {
+  collectionAddProducts?: { collection: { id: string } | null; userErrors: UserError[] };
+}
+
+interface CollectionRemoveResponse {
+  collectionRemoveProducts?: { job: { done: boolean; id: string } | null; userErrors: UserError[] };
+}
+
 interface UserError {
   field?: string[];
   message: string;
@@ -168,6 +184,67 @@ const addImage = async (productId: string, product: ProductDraft): Promise<void>
   if (errors.length) throw new Error(mutationErrors(errors));
 };
 
+const FEATURED_COLLECTION_TITLE = 'Featured Collection';
+const FEATURED_COLLECTION_HANDLE = 'featured-collection';
+
+const resolveFeaturedCollectionId = async (): Promise<string> => {
+  if (config.shopifyFeaturedCollectionId) return config.shopifyFeaturedCollectionId;
+  const data = await shopifyAdminClient.request<FeaturedCollectionLookup>(
+    `query FeaturedCollection($handle: String!) {
+      collections(first: 1, query: $handle) {
+        nodes { id }
+      }
+    }`,
+    { handle: `handle:${FEATURED_COLLECTION_HANDLE}` },
+  );
+  const existing = data.collections.nodes[0];
+  if (existing) return existing.id;
+  const result = await shopifyAdminClient.request<CollectionMutationResponse>(
+    `mutation CreateFeaturedCollection($collection: CollectionInput!) {
+      collectionCreate(collection: $collection) { collection { id } userErrors { field message } }
+    }`,
+    { collection: { title: FEATURED_COLLECTION_TITLE, handle: FEATURED_COLLECTION_HANDLE } },
+  );
+  const mutation = result.collectionCreate;
+  if (!mutation) throw new Error('Shopify returned no featured collection create result.');
+  if (mutation.userErrors.length) throw new Error(mutationErrors(mutation.userErrors));
+  if (!mutation.collection) throw new Error('Shopify did not return the created featured collection.');
+  return mutation.collection.id;
+};
+
+const addProductToCollection = async (productId: string, collectionId: string): Promise<void> => {
+  const result = await shopifyAdminClient.request<CollectionAddResponse>(
+    `mutation AddProductsToCollection($id: ID!, $productIds: [ID!]!) {
+      collectionAddProducts(id: $id, productIds: $productIds) { collection { id } userErrors { field message } }
+    }`,
+    { id: collectionId, productIds: [productId] },
+  );
+  const mutation = result.collectionAddProducts;
+  if (!mutation) throw new Error('Shopify returned no collection add products result.');
+  if (mutation.userErrors.length) throw new Error(mutationErrors(mutation.userErrors));
+};
+
+const removeProductFromCollection = async (productId: string, collectionId: string): Promise<void> => {
+  const result = await shopifyAdminClient.request<CollectionRemoveResponse>(
+    `mutation RemoveProductsFromCollection($id: ID!, $productIds: [ID!]!) {
+      collectionRemoveProducts(id: $id, productIds: $productIds) { job { done id } userErrors { field message } }
+    }`,
+    { id: collectionId, productIds: [productId] },
+  );
+  const mutation = result.collectionRemoveProducts;
+  if (!mutation) throw new Error('Shopify returned no collection remove products result.');
+  if (mutation.userErrors.length) throw new Error(mutationErrors(mutation.userErrors));
+};
+
+const manageFeaturedCollection = async (product: ProductDraft, shopifyProductId: string): Promise<void> => {
+  const collectionId = await resolveFeaturedCollectionId();
+  if (product.featured) {
+    await addProductToCollection(shopifyProductId, collectionId);
+  } else {
+    await removeProductFromCollection(shopifyProductId, collectionId);
+  }
+};
+
 export const publishProduct = async (product: ProductDraft): Promise<ProductPublishResult> => {
   if (!product.title.trim()) return { status: 'skipped', action: 'skipped', shopifyProductId: null, matchCount: 0, error: 'Title is required.' };
   if (product.suggestedSalePrice === null || !Number.isFinite(product.suggestedSalePrice) || product.suggestedSalePrice <= 0) return { status: 'skipped', action: 'skipped', shopifyProductId: null, matchCount: 0, error: 'A valid suggested sale price is required.' };
@@ -228,7 +305,13 @@ export const publishProduct = async (product: ProductDraft): Promise<ProductPubl
     await updateInventoryItemCost(inventoryItemId, product.unitPrice);
     await updateInventory(inventoryItemId, product.inventoryQuantity);
     if (action === 'created') await addImage(shopifyProductId, product);
-    return { status: 'published', action, shopifyProductId, matchCount: matches.length, error: '' };
+    let collectionError = '';
+    try {
+      await manageFeaturedCollection(product, shopifyProductId);
+    } catch (collectionErr) {
+      collectionError = collectionErr instanceof Error ? collectionErr.message : 'Featured collection management failed.';
+    }
+    return { status: 'published', action, shopifyProductId, matchCount: matches.length, error: collectionError };
   } catch (error) {
     return { status: 'failed', action: matches.length ? 'updated' : 'created', shopifyProductId: matches[0]?.id ?? null, matchCount: matches.length, error: error instanceof Error ? error.message : 'Shopify publishing failed.' };
   }

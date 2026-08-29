@@ -7,14 +7,15 @@ services:
     container_name: ecomint
     restart: unless-stopped
     ports:
-      - "${HOST_PORT:-8787}:8787"
+      - "${HOST_PORT:-${PORT:-8787}}:${PORT:-8787}"
     environment:
       NODE_ENV: production
-      PORT: 8787
+      PORT: ${PORT:-8787}
       SHOPIFY_STORE_DOMAIN: ${SHOPIFY_STORE_DOMAIN:-cb1710-2.myshopify.com}
       SHOPIFY_ADMIN_ACCESS_TOKEN: ${SHOPIFY_ADMIN_ACCESS_TOKEN:-}
       SHOPIFY_API_VERSION: ${SHOPIFY_API_VERSION:-2026-07}
       SHOPIFY_LOCATION_ID: ${SHOPIFY_LOCATION_ID:-}
+      SHOPIFY_FEATURED_COLLECTION_ID: ${SHOPIFY_FEATURED_COLLECTION_ID:-}
       SOURCE_URL_ALLOWLIST: ${SOURCE_URL_ALLOWLIST:-}
       DATABASE_PATH: /app/data/ecomint.db
       PRODUCT_IMAGE_DIRECTORY: /app/productimage
@@ -35,7 +36,7 @@ services:
       - ecomint-logs:/app/logs
       - ecomint-images:/app/productimage
     healthcheck:
-      test: ["CMD", "node", "-e", "require('http').get('http://127.0.0.1:8787/api/health', r => process.exit(r.statusCode === 200 ? 0 : 1)).on('error', () => process.exit(1))"]
+      test: ["CMD", "node", "-e", "const p=process.env.PORT||'8787';require('http').get('http://127.0.0.1:'+p+'/api/health',r=>process.exit(r.statusCode===200?0:1)).on('error',()=>process.exit(1))"]
       interval: 10s
       timeout: 5s
       start_period: 30s

@@ -1,10 +1,20 @@
 $ErrorActionPreference = 'Stop'
 
 $projectRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
+
+# Load .env so this script uses the same ports as Vite and Express
+Get-Content (Join-Path $projectRoot '.env') -ErrorAction SilentlyContinue | ForEach-Object {
+  if ($_ -match '^\s*([^#][^=]*?)\s*=\s*(.*)$') {
+    Set-Item -Path "env:$($matches[1].Trim())" -Value $matches[2].Trim()
+  }
+}
+
 $stateDirectory = Join-Path $projectRoot '.ecomint'
 $statePath = Join-Path $stateDirectory 'processes.json'
 $logDirectory = Join-Path $stateDirectory 'logs'
-$applicationPorts = @(5173, 8787)
+$apiPort = if ($env:PORT) { [int]$env:PORT } else { 8787 }
+$clientPort = if ($env:VITE_DEV_PORT) { [int]$env:VITE_DEV_PORT } else { 5173 }
+$applicationPorts = @($clientPort, $apiPort)
 
 New-Item -ItemType Directory -Path $logDirectory -Force | Out-Null
 
@@ -15,8 +25,8 @@ if (Test-Path $statePath) {
   })
   if ($runningProcesses.Count -gt 0) {
     Write-Host 'eComInt is already running.'
-    Write-Host 'Web app: http://127.0.0.1:5173'
-    Write-Host 'API:     http://127.0.0.1:8787/api/health'
+    Write-Host "Web app: http://127.0.0.1:$clientPort"
+    Write-Host "API:     http://127.0.0.1:$apiPort/api/health"
     exit 0
   }
   Remove-Item $statePath -Force
@@ -74,8 +84,8 @@ while ([DateTime]::UtcNow -lt $startupDeadline -and (-not $serverReady -or -not 
   if ($serverProcess.HasExited -or $clientProcess.HasExited) {
     break
   }
-  $serverReady = Test-Endpoint 'http://127.0.0.1:8787/api/health'
-  $clientReady = Test-Endpoint 'http://127.0.0.1:5173/'
+  $serverReady = Test-Endpoint "http://127.0.0.1:$apiPort/api/health"
+  $clientReady = Test-Endpoint "http://127.0.0.1:$clientPort/"
 }
 
 if (-not $serverReady -or -not $clientReady) {
@@ -84,6 +94,6 @@ if (-not $serverReady -or -not $clientReady) {
 }
 
 Write-Host 'eComInt started.'
-Write-Host 'Web app: http://127.0.0.1:5173'
-Write-Host 'API:     http://127.0.0.1:8787/api/health'
+Write-Host "Web app: http://127.0.0.1:$clientPort"
+Write-Host "API:     http://127.0.0.1:$apiPort/api/health"
 Write-Host "Logs:    $logDirectory"

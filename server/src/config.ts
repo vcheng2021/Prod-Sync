@@ -17,6 +17,7 @@ export const config = {
   productImageDirectory: path.resolve(process.cwd(), process.env.PRODUCT_IMAGE_DIRECTORY ?? './productimage'),
   logDirectory: path.resolve(process.cwd(), process.env.LOG_DIRECTORY ?? './logs'),
   shopifyLocationId: process.env.SHOPIFY_LOCATION_ID ?? '',
+  shopifyFeaturedCollectionId: process.env.SHOPIFY_FEATURED_COLLECTION_ID ?? '',
   maxImportRows: Number(process.env.MAX_IMPORT_ROWS ?? 10000),
   defaultWorkbookPath: path.resolve(process.cwd(), 'suppliers', 'sup2_paramountliquor.xlsx'),
   sourceRequestTimeoutMs: Number(process.env.SOURCE_REQUEST_TIMEOUT_MS ?? 12_000),

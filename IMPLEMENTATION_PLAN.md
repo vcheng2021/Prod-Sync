@@ -12,11 +12,13 @@ The app will use the workbook at `suppliers/sup2_paramountliquor.xlsx` as its in
 ## Current implementation notes
 
 - Ordinary product edits are staged in the React client by product ID. Save sends only changed allowlisted fields to SQLite.
+- The `featured` flag is an app-owned boolean toggle in the editor panel. It is staged in the dirty-field map alongside other edits and sent to Shopify as collection membership (custom collection + collect) during publish.
 - Publishing accepts the staged field changes with the selected IDs and persists them before loading the products for Shopify. This keeps manually edited title, price, inventory, description, and About fields from reverting to their originally imported values.
 - Source retrieval merges its response with pending client edits so enrichment cannot overwrite an unsaved manual change.
 - The Posting issues metric reads the newest current-draft failure entries from `logs/ecomint.log` through `GET /api/issues?draftId=<id>` and displays structured error details.
 - Reset page clears the visible client workspace and transient status without deleting SQLite, log, or image data. Purge database remains the explicit destructive reset.
 - The publisher sends suggested sale price to the Shopify variant `price` and local unit price to the inventory item's `cost` field, shown as Cost per item. Shopify's variant `unitPrice` remains a calculated measurement-based value.
+- A product can be flagged as **featured** via a checkbox in the editor panel. When published, the product is added to a Shopify custom collection (resolved from `SHOPIFY_FEATURED_COLLECTION_ID` or auto-created with handle `featured-collection`). The `featured` flag is app-owned and preserved across workbook merges.
 - Shopify API version `2026-07` requires unique `@idempotent` keys for inventory activation and quantity updates. The token must still have `write_inventory` and the installing user must have permission to manage the configured location.
 
 ## Spreadsheet Mapping
@@ -98,7 +100,7 @@ Configuration keys include:
 - `SHOPIFY_API_VERSION=2026-07`
 - `SOURCE_URL_ALLOWLIST=<approved supplier hosts>`
 - `PORT`, `DATABASE_PATH`, `PRODUCT_IMAGE_DIRECTORY`, and `MAX_IMPORT_ROWS`
-- `LOG_DIRECTORY` and `SHOPIFY_LOCATION_ID`
+- `LOG_DIRECTORY`, `SHOPIFY_LOCATION_ID`, and `SHOPIFY_FEATURED_COLLECTION_ID` (optional — targets a specific custom collection for featured products)
 - Source and image timeout, redirect, response-size, byte-limit, and concurrency settings
 
 The server must fail clearly for Shopify publishing when `SHOPIFY_ADMIN_ACCESS_TOKEN` is missing, while still allowing spreadsheet import and local editing without credentials. No Shopify URL, token, credential, timeout, file path, row limit, or source allowlist may be hardcoded in frontend code.
@@ -130,6 +132,7 @@ Shopify behavior:
 - Never delete products automatically.
 - Publish selected products only after final review and confirmation.
 - Check GraphQL transport errors and `userErrors` for every mutation, including successful HTTP responses. Preserve error codes and field paths in the issue log when Shopify supplies them.
+- When a product's `featured` flag is set, add it to the configured or auto-created Featured Collection via `collectCreate`; remove it via `collectDelete` when the flag is cleared. Collection-management failures are reported but do not prevent the product publish.
 
 ## Implemented Technical Structure
 
