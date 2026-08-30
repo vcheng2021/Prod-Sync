@@ -8,6 +8,7 @@ const parseAllowlist = (value: string | undefined): string[] =>
     .filter(Boolean);
 
 export const config = {
+  appVersion: process.env.APP_VERSION ?? '0.1.0',
   port: Number(process.env.PORT ?? 8787),
   storeDomain: process.env.SHOPIFY_STORE_DOMAIN ?? 'cb1710-2.myshopify.com',
   shopifyAdminAccessToken: process.env.SHOPIFY_ADMIN_ACCESS_TOKEN ?? '',

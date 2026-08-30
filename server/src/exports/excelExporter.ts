@@ -27,6 +27,8 @@ const productToRow = (product: ProductDraft, rawKeys: string[]): Record<string, 
     'Publish status': product.publishStatus,
     'Publish error': product.publishError,
     'Shopify product ID': product.shopifyProductId,
+    'Featured': product.featured ? 'Yes' : 'No',
+    'Online Store': product.publishToOnlineStore ? 'Yes' : 'No',
     'Validation errors': product.validationErrors.join(' | '),
   };
   for (const key of rawKeys) row[`Raw: ${key}`] = product.raw[key] ?? '';

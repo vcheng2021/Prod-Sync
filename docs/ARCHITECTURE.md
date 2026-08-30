@@ -6,7 +6,7 @@ eComInt is a single-instance internal product operations application. It imports
 
 The application is intentionally stateful. SQLite, the physical event log, and downloaded product images are application data and must be kept on persistent storage. The application is not designed for multiple server instances sharing one SQLite file.
 
-> Last updated: 2026-08-28. This document describes the implemented application behavior, not only the original build plan.
+> Last updated: 2026-08-30. This document describes the implemented application behavior, not only the original build plan.
 
 ## 2. System context
 
@@ -38,10 +38,12 @@ The browser never receives the Shopify Admin token. All supplier network request
 `client/src/App.tsx` owns the workspace interaction model:
 
 - loads the current catalog when the application starts;
+- displays the application version in the brand bar;
 - displays searchable, filterable products;
 - stages editable fields in a dirty-field map;
 - submits only changed fields from the top Save button;
 - starts explicit source/image retrieval for checked rows;
+- clears all checked items across the full catalog via a toolbar button;
 - shows publish review and confirmation;
 - opens current-draft failure records from the physical log through the Posting issues metric;
 - resets the visible workspace through Reset page without deleting persisted catalog data;
@@ -91,10 +93,13 @@ Application-owned fields survive a matching workbook merge:
 - description and manually edited enrichment fields;
 - selection state;
 - featured flag (app-controlled, preserved across workbook merges);
+- online store sales channel flag (app-controlled, preserved across workbook merges, defaults to on);
 - image/source retrieval state unless its source URL changed;
 - Shopify IDs, publish status, and publish error history.
 
 A new product gets a suggested sale price of `unit price * 1.25`, rounded to cents, when the unit price is valid. Its Shopify inventory defaults to `1` when supplier SOH is greater than `2`, otherwise `0`. Suggested sale price is the editable Shopify retail price. Unit price remains the supplier cost locally and is written to the Shopify inventory item's `cost` field, displayed as Cost per item.
+
+In the editor panel, supplier-owned fields (Product Title, Unit Price, Case Price, and Supplier Stock on Hand) are displayed as read-only with a light gray background. Only app-owned fields (Suggested Sale Price and Shopify Inventory) are editable in the editor.
 
 If an existing suggested sale price still equals the previous automatic 25 percent calculation, a changed unit price recalculates it. Once the operator edits the suggested price, it is treated as an override and later workbooks do not replace it.
 
@@ -130,7 +135,7 @@ A unique partial index on `(draft_id, supplier_product_key_normalized)` prevents
 
 ### `GET /api/health`
 
-Returns a lightweight health response and does not call Shopify. Docker uses this endpoint for its health check.
+Returns a lightweight health response and does not call Shopify. Docker uses this endpoint for its health check. The response includes the application `version`.
 
 ### `GET /api/drafts/current`
 
@@ -205,6 +210,10 @@ When a product has its `featured` flag set, the publisher manages a Shopify cust
 
 On each publish, the publisher adds the product to the collection via `collectCreate` (checking for an existing collect first to avoid duplicates) when `featured` is true, or removes it via `collectDelete` when false. Collection-management failures are caught and reported in the product's publish error string but do not change a successful product publish status. The `read_products` and `write_products` scopes cover these collection and collect mutations; no additional Shopify permissions are required.
 
+### Online Store Sales Channel
+
+When a product has its `publishToOnlineStore` flag set (default on), the publisher publishes the product to the Online Store sales channel on publish via `publishablePublish`, or unpublishes it via `publishableUnpublish` when unchecked. The Online Store publication ID is resolved once per server session by querying `publications(first: 25)` and matching `name` to "Online Store"; the result is cached for the lifetime of the process. Sales-channel publish failures are caught and appended to the publish result's error string without changing the product's publish status from `published`. The `read_publications` and `write_publications` scopes are required for these mutations; the existing `read_products` and `write_products` scopes also remain in effect.
+
 ## 10. Logging and redaction
 
 The server appends structured JSON lines to `logs/ecomint.log` by default. Events include startup, seed, restore, merge, Save, retrieval, refresh, publish, purge, validation, and unexpected failures. `AppLogger.readIssues()` reads failure entries in reverse chronological order; `GET /api/issues` exposes at most the 100 newest matching entries to the browser for the Posting issues view.
@@ -239,6 +248,7 @@ Secrets are runtime environment variables. The real `.env` file, database, logs,
 
 Important server variables are:
 
+- `APP_VERSION`: application version string shown in the UI and returned by `/api/health` and `/api/ready`, default `0.1.0`;
 - `PORT`: HTTP port (API server and Docker container-internal), default `8787`. Override with `HOST_PORT` for the Docker host-facing port;
 - `DATABASE_PATH`: SQLite path, default `./data/ecomint.db`;
 - `PRODUCT_IMAGE_DIRECTORY`: image directory, default `./productimage`;

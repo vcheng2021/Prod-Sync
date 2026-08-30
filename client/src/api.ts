@@ -37,6 +37,7 @@ export interface ProductDraft {
   validationErrors: string[];
   raw: Record<string, unknown>;
   featured: boolean;
+  publishToOnlineStore: boolean;
 }
 
 export interface DraftResponse {
@@ -132,6 +133,7 @@ export const exportDraftUrl = (draftId: string): string => `/api/drafts/${draftI
 
 export interface ReadinessStatus {
   ok: boolean;
+  version: string;
   shopifyConfigured: boolean;
   storeDomain: string;
   missing: string[];

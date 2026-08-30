@@ -6,7 +6,7 @@ This runbook is for operators and maintainers of the local eComInt product works
 
 The application stores product data locally in SQLite. A database purge deletes local catalog state but does not delete Shopify products.
 
-> Last updated: 2026-08-28. The runbook covers the current API, issue-log, inventory, and reset behavior.
+> Last updated: 2026-08-30. The runbook covers the current API, issue-log, inventory, reset, version display, and checked-row clearing behavior.
 
 ## 2. Prerequisites
 
@@ -46,7 +46,7 @@ SHOPIFY_FEATURED_COLLECTION_ID=gid://shopify/Collection/...
 
 When `SHOPIFY_FEATURED_COLLECTION_ID` is provided, products flagged as **Featured** in the editor are added to that collection on publish. When omitted, the publisher searches for a custom collection with handle `featured-collection` and creates one named "Featured Collection" if it does not exist.
 
-The Shopify app/token must have `read_products`, `write_products`, `read_inventory`, and `write_inventory` access as required by the selected Admin API operations. The installing user must also have permission to update inventory items and activate inventory at the configured location. API version `2026-07` requires an `@idempotent` key on inventory activation and quantity mutations; the application adds those keys automatically. If scopes were added after the token was created, reauthorize or reinstall the app so the token receives the new scopes. Confirm the location ID is the main store location where quantities should be set.
+The Shopify app/token must have `read_products`, `write_products`, `read_inventory`, `write_inventory`, `read_publications`, and `write_publications` access as required by the selected Admin API operations. The installing user must also have permission to update inventory items and activate inventory at the configured location. API version `2026-07` requires an `@idempotent` key on inventory activation and quantity mutations; the application adds those keys automatically. If scopes were added after the token was created, reauthorize or reinstall the app so the token receives the new scopes. Confirm the location ID is the main store location where quantities should be set.
 
 Useful local paths:
 
@@ -158,6 +158,10 @@ Suggested sale price is the Shopify variant retail price. Local unit price is wr
 
 Do not start a new import or close the browser with important unsaved changes.
 
+The toolbar provides **Select visible** (checks all filtered rows), **Clear visible** (unchecks visible rows), and **Clear all checked** (deselects every checked row across the entire catalog, regardless of active filters). Clearing selections does not affect staged edits, filters, or any other state.
+
+In the product detail editor, supplier-owned fields — Product Title, Unit Price, Case Price, and Supplier Stock on Hand — are displayed as read-only with a light gray background. Only Suggested Sale Price and Shopify Inventory are editable in the editor.
+
 **Reset page** clears the visible draft, filters, selections, messages, modal state, issue records, and unsaved browser edits. It does not delete SQLite data. A later browser reload restores the persisted catalog. Use **Purge database** when the local catalog itself must be removed.
 
 ## 9. Source retrieval and publishing
@@ -173,6 +177,8 @@ Publishing requires selected and valid rows plus final confirmation. The review 
 In addition to price, cost, and inventory, the publisher maps the app `brand` to the Shopify product `vendor`, the app `productType` to the Shopify `productType`, and derives Shopify `tags` from a non-empty subset of the `brand`, `productType`, and `country` fields. These are standard `Product` attributes covered by the existing `write_products` scope; no additional Shopify permissions are required.
 
 When the editor **Featured** checkbox is set, the publisher adds the product to a Shopify custom collection on publish, or removes it when unchecked on a subsequent publish. The collection is resolved from `SHOPIFY_FEATURED_COLLECTION_ID`, falling back to a handle-based lookup that auto-creates `featured-collection` if absent. Collection-management errors are reported in the posting issues but do not fail the product publish itself.
+
+When the editor **Online Store** checkbox is set (default on), the publisher publishes the product to the Online Store sales channel via `publishablePublish` on publish, or removes it from that publication via `publishableUnpublish` when unchecked on a subsequent publish. The Online Store publication ID is resolved once per server session by querying `publications(first: 25)` and matching the name to "Online Store". Publication-management errors are reported in the posting issues but do not fail the product publish itself. The `read_publications` and `write_publications` scopes are required for these mutations.
 
 A Shopify failure is retained on the product and in publish history. The **Posting issues** metric reads the newest failure records for the current draft from `GET /api/issues?draftId=<id>`, backed by `logs/ecomint.log`. Each record includes the event, timestamp, product ID when available, Shopify error text, GraphQL error code, and mutation field path. Product-linked records can be opened from the issue list to return to the product editor. Correct the row and retry. A failed local publish does not justify deleting a product from Shopify.
 
@@ -193,11 +199,13 @@ Use the top Purge database button, read the warning, and type `PURGE`. After suc
 
 ## 11. Health and logs
 
-The health endpoint only confirms that Express is responding:
+The health endpoint confirms that Express is responding and returns the application version:
 
 ```text
 GET /api/health
 ```
+
+The `/api/ready` endpoint returns the version alongside Shopify readiness status (`ok`, `shopifyConfigured`, `storeDomain`, `missing`). The version is also displayed in the brand bar in the upper-right corner of the workspace.
 
 The physical event log is JSON Lines at `logs/ecomint.log` locally or `/app/logs/ecomint.log` in Docker. It records startup, seed/restore, imports, merges, Saves, retrieval, publishing, purge, validation, and failures.
 
@@ -277,6 +285,10 @@ Confirm `SHOPIFY_ADMIN_ACCESS_TOKEN`, `SHOPIFY_STORE_DOMAIN`, API version, and `
 ### Featured product is not in the collection
 
 Confirm `SHOPIFY_FEATURED_COLLECTION_ID` is set if you want to target a specific collection. When unset, the publisher auto-creates or searches for a collection with handle `featured-collection`. Check the posting issues for a collection-management error on the affected product. The product itself publishes normally even if collection linking fails; retry after correcting the collection ID or Shopify scopes.
+
+### Product is not published to the Online Store sales channel
+
+Confirm the editor **Online Store** checkbox is checked and that the `read_publications` and `write_publications` Shopify scopes are granted on the token. For "Could not find the Online Store sales channel publication," confirm the Online Store sales channel exists on the store (the publisher searches the first 25 publications for one named "Online Store"). Publication errors are reported in the posting issues without failing the product publish itself; retry after correcting the scopes or channel.
 
 ### Inventory does not update
 

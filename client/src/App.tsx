@@ -280,6 +280,7 @@ function AppContent() {
   const [issuesLoading, setIssuesLoading] = useState(false)
   const [logIssues, setLogIssues] = useState<LogIssue[]>([])
   const [readiness, setReadiness] = useState<ReadinessStatus | null>(null)
+  const [clearingChecked, setClearingChecked] = useState(false)
 
   const activeProduct =
     draft?.products.find((product) => product.id === activeProductId) ??
@@ -569,6 +570,14 @@ function AppContent() {
     for (const product of visibleProducts) patchProduct(product.id, { selected: shouldSelect })
   }
 
+  const clearAllChecked = () => {
+    if (!draft || clearingChecked) return
+    setClearingChecked(true)
+    const selected = draft.products.filter((product) => product.selected)
+    for (const product of selected) patchProduct(product.id, { selected: false })
+    setClearingChecked(false)
+  }
+
   const handleRetrieve = async (product: ProductDraft) => {
     if (!draft || !product.selected || (!product.sourceUrl && !product.imageUrl)) return
     setActiveProductId(product.id)
@@ -775,6 +784,24 @@ function AppContent() {
     )
   }
 
+  const renderReadOnlyNumberInput = (label: string, value: number | null) => {
+    return (
+      <label className="field readonly">
+        <span>{label}</span>
+        <input type="number" min="0" value={value ?? ''} readOnly />
+      </label>
+    )
+  }
+
+  const renderReadOnlyTextInput = (label: string, value: string) => {
+    return (
+      <label className="field readonly">
+        <span>{label}</span>
+        <input value={value ?? ''} readOnly />
+      </label>
+    )
+  }
+
   if (!draft) {
     return (
       <main className="app-shell landing-shell">
@@ -798,6 +825,11 @@ function AppContent() {
                 {readiness.shopifyConfigured
                   ? `Shopify connected: ${readiness.storeDomain}`
                   : `Shopify not configured`}
+              </span>
+            )}
+            {readiness && (
+              <span className="version-tag" title="Application version">
+                v{readiness.version}
               </span>
             )}
           </div>
@@ -883,7 +915,12 @@ function AppContent() {
                 ? `Connected: ${readiness.storeDomain}`
                 : 'Shopify not configured'}
             </span>
-          )}
+            )}
+            {readiness && (
+              <span className="version-tag" title="Application version">
+                v{readiness.version}
+              </span>
+            )}
           <button
             type="button"
             className="button button-primary"
@@ -980,6 +1017,14 @@ function AppContent() {
           {visibleProducts.every((product) => product.selected)
             ? 'Clear visible'
             : 'Select visible'}
+        </button>
+        <button
+          type="button"
+          className="button button-secondary"
+          disabled={selectedProducts.length === 0 || clearingChecked}
+          onClick={clearAllChecked}
+        >
+          {clearingChecked ? 'Clearing…' : `Clear all checked (${selectedProducts.length})`}
         </button>
         <button
           type="button"
@@ -1191,26 +1236,39 @@ function AppContent() {
                 {renderStatus(activeProduct.enrichmentStatus)}
               </div>
 
-              {renderTextInput('Title', 'title', activeProduct.title)}
+              <div className="field-group">
+                <div className="field-group-heading">
+                  <div className="eyebrow">SUPPLIER DATA</div>
+                  <span>Read-only</span>
+                </div>
+                <div className="field-grid">
+                  {renderReadOnlyTextInput('Product Title', activeProduct.title)}
+                  {renderReadOnlyNumberInput('Unit price', activeProduct.unitPrice)}
+                  {renderReadOnlyNumberInput('Case price', activeProduct.casePrice)}
+                  {renderReadOnlyNumberInput(
+                    'Supplier stock on hand',
+                    activeProduct.stockOnHand ?? null,
+                  )}
+                </div>
+              </div>
 
-              <div className="field-grid">
-                {renderNumberInput('Unit price', 'unitPrice', activeProduct.unitPrice)}
-                {renderNumberInput(
-                  'Suggested sale price',
-                  'suggestedSalePrice',
-                  activeProduct.suggestedSalePrice,
-                )}
-                {renderNumberInput('Case price', 'casePrice', activeProduct.casePrice)}
-                {renderNumberInput(
-                  'Supplier stock on hand',
-                  'stockOnHand',
-                  activeProduct.stockOnHand ?? null,
-                )}
-                {renderNumberInput(
-                  'Shopify inventory',
-                  'inventoryQuantity',
-                  activeProduct.inventoryQuantity,
-                )}
+              <div className="field-group">
+                <div className="field-group-heading">
+                  <div className="eyebrow">APP DATA</div>
+                  <span>Editable</span>
+                </div>
+                <div className="field-grid">
+                  {renderNumberInput(
+                    'Suggested sale price',
+                    'suggestedSalePrice',
+                    activeProduct.suggestedSalePrice,
+                  )}
+                  {renderNumberInput(
+                    'Shopify inventory',
+                    'inventoryQuantity',
+                    activeProduct.inventoryQuantity,
+                  )}
+                </div>
               </div>
 
               <div className="source-line">
@@ -1237,24 +1295,43 @@ function AppContent() {
               </div>
 
               <div
-                className={`featured-row ${'featured' in (dirtyFieldsFor(activeProduct.id) ?? {}) ? 'dirty' : ''}`}
+                className={`featured-row ${'featured' in (dirtyFieldsFor(activeProduct.id) ?? {}) || 'publishToOnlineStore' in (dirtyFieldsFor(activeProduct.id) ?? {}) ? 'dirty' : ''}`}
               >
-                <label>
-                  <input
-                    type="checkbox"
-                    checked={activeProduct.featured}
-                    onChange={(event) =>
-                      patchProduct(activeProduct.id, {
-                        featured: event.target.checked,
-                      })
-                    }
-                    aria-label="Flag as featured"
-                  />
-                  <span>Featured</span>
-                </label>
+                <div className="publish-checkboxes">
+                  <label>
+                    <input
+                      type="checkbox"
+                      checked={activeProduct.featured}
+                      onChange={(event) =>
+                        patchProduct(activeProduct.id, {
+                          featured: event.target.checked,
+                        })
+                      }
+                      aria-label="Flag as featured"
+                    />
+                    <span>Featured</span>
+                  </label>
+                  <label>
+                    <input
+                      type="checkbox"
+                      checked={activeProduct.publishToOnlineStore}
+                      onChange={(event) =>
+                        patchProduct(activeProduct.id, {
+                          publishToOnlineStore: event.target.checked,
+                        })
+                      }
+                      aria-label="Publish to Online Store sales channel"
+                    />
+                    <span>Online Store</span>
+                  </label>
+                </div>
                 <small>
                   When published, the product is added to the Featured Collection
                   on Shopify.
+                </small>
+                <small>
+                  When checked, the product is published to the Online Store sales
+                  channel on Shopify.
                 </small>
               </div>
 

@@ -22,6 +22,7 @@ FROM node:22-bookworm-slim AS runtime
 
 ENV NODE_ENV=production
 ENV PORT=8787
+ENV APP_VERSION=0.1.0
 ENV DATABASE_PATH=/app/data/ecomint.db
 ENV PRODUCT_IMAGE_DIRECTORY=/app/productimage
 ENV LOG_DIRECTORY=/app/logs

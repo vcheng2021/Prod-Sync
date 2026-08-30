@@ -12,6 +12,8 @@ The app will use the workbook at `suppliers/sup2_paramountliquor.xlsx` as its in
 ## Current implementation notes
 
 - Ordinary product edits are staged in the React client by product ID. Save sends only changed allowlisted fields to SQLite.
+- The application version is configured via `APP_VERSION` and displayed in the brand bar; it is also returned by `/api/health` and `/api/ready`.
+- The toolbar includes a **Clear all checked** button that deselects all checked rows across the full catalog regardless of active filters.
 - The `featured` flag is an app-owned boolean toggle in the editor panel. It is staged in the dirty-field map alongside other edits and sent to Shopify as collection membership (custom collection + collect) during publish.
 - Publishing accepts the staged field changes with the selected IDs and persists them before loading the products for Shopify. This keeps manually edited title, price, inventory, description, and About fields from reverting to their originally imported values.
 - Source retrieval merges its response with pending client edits so enrichment cannot overwrite an unsaved manual change.
@@ -33,7 +35,7 @@ The app will use the workbook at `suppliers/sup2_paramountliquor.xlsx` as its in
 | I | Case price | Display and edit in the app; stored as supplier data and not used as the Shopify retail price |
 | J | Unit price | Supplier cost; used to calculate the initial suggested sale price and update Shopify Cost per item |
 
-The UI also stores an editable suggested sale price and a separate Shopify inventory quantity. New rows start with a suggested sale price equal to unit price plus 25%, rounded to cents. Shopify inventory starts at 1 when supplier SOH is greater than 2, otherwise 0. Column B is required; missing or duplicate keys are row-level import errors.
+The product detail editor groups supplier fields (title, unit price, case price, supplier stock on hand) as read-only and app-editable fields (suggested sale price, Shopify inventory) as editable. The UI also stores an editable suggested sale price and a separate Shopify inventory quantity. New rows start with a suggested sale price equal to unit price plus 25%, rounded to cents. Shopify inventory starts at 1 when supplier SOH is greater than 2, otherwise 0. Column B is required; missing or duplicate keys are row-level import errors.
 
 The parser must preserve the original spreadsheet row number and raw row data. Missing keys and conflicting duplicate keys should be reported individually rather than silently discarded. Exact duplicate supplier rows may be skipped and reported in the import summary.
 
@@ -99,7 +101,7 @@ Configuration keys include:
 - `SHOPIFY_ADMIN_ACCESS_TOKEN=<server-only token>`
 - `SHOPIFY_API_VERSION=2026-07`
 - `SOURCE_URL_ALLOWLIST=<approved supplier hosts>`
-- `PORT`, `DATABASE_PATH`, `PRODUCT_IMAGE_DIRECTORY`, and `MAX_IMPORT_ROWS`
+- `APP_VERSION`, `PORT`, `DATABASE_PATH`, `PRODUCT_IMAGE_DIRECTORY`, and `MAX_IMPORT_ROWS`
 - `LOG_DIRECTORY`, `SHOPIFY_LOCATION_ID`, and `SHOPIFY_FEATURED_COLLECTION_ID` (optional — targets a specific custom collection for featured products)
 - Source and image timeout, redirect, response-size, byte-limit, and concurrency settings
 

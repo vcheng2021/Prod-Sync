@@ -35,13 +35,14 @@ try {
 }
 
 app.use(express.json({ limit: '2mb' }));
-app.get('/api/health', (_request, response) => response.json({ ok: true }));
+app.get('/api/health', (_request, response) => response.json({ ok: true, version: config.appVersion }));
 app.get('/api/ready', (_request, response) => {
   const missing: string[] = []
   if (!config.shopifyAdminAccessToken) missing.push('SHOPIFY_ADMIN_ACCESS_TOKEN')
   if (!config.shopifyLocationId) missing.push('SHOPIFY_LOCATION_ID')
   response.json({
     ok: true,
+    version: config.appVersion,
     shopifyConfigured: missing.length === 0,
     storeDomain: config.storeDomain,
     missing,

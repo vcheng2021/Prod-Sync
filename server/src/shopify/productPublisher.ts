@@ -49,6 +49,15 @@ interface CollectionRemoveResponse {
   collectionRemoveProducts?: { job: { done: boolean; id: string } | null; userErrors: UserError[] };
 }
 
+interface PublicationLookup {
+  publications: { nodes: Array<{ id: string; name: string }> };
+}
+
+interface PublicationMutationResponse {
+  publishablePublish?: { publishable: { id: string } | null; userErrors: UserError[] };
+  publishableUnpublish?: { publishable: { id: string } | null; userErrors: UserError[] };
+}
+
 interface UserError {
   field?: string[];
   message: string;
@@ -245,6 +254,52 @@ const manageFeaturedCollection = async (product: ProductDraft, shopifyProductId:
   }
 };
 
+const ONLINE_STORE_PUBLICATION_NAME = 'Online Store';
+let onlineStorePublicationIdCache: string | undefined;
+
+const resolveOnlineStorePublicationId = async (): Promise<string> => {
+  if (onlineStorePublicationIdCache !== undefined) return onlineStorePublicationIdCache;
+  const data = await shopifyAdminClient.request<PublicationLookup>(
+    `query OnlineStorePublication {
+      publications(first: 25) {
+        nodes { id name }
+      }
+    }`,
+  );
+  const match = data.publications.nodes.find(
+    (publication) => publication.name.toLowerCase() === ONLINE_STORE_PUBLICATION_NAME.toLowerCase(),
+  );
+  if (!match) throw new Error(`Could not find the Online Store sales channel publication among ${data.publications.nodes.length} publications.`);
+  onlineStorePublicationIdCache = match.id;
+  return match.id;
+};
+
+const publishToOnlineStore = async (shopifyProductId: string): Promise<void> => {
+  const publicationId = await resolveOnlineStorePublicationId();
+  const result = await shopifyAdminClient.request<PublicationMutationResponse>(
+    `mutation PublishToPublication($id: ID!, $input: [PublicationInput!]!) {
+      publishablePublish(id: $id, input: $input) { publishable { id } userErrors { field message } }
+    }`,
+    { id: shopifyProductId, input: [{ publicationId }] },
+  );
+  const mutation = result.publishablePublish;
+  if (!mutation) throw new Error('Shopify returned no online store publish result.');
+  if (mutation.userErrors.length) throw new Error(mutationErrors(mutation.userErrors));
+};
+
+const unpublishFromOnlineStore = async (shopifyProductId: string): Promise<void> => {
+  const publicationId = await resolveOnlineStorePublicationId();
+  const result = await shopifyAdminClient.request<PublicationMutationResponse>(
+    `mutation UnpublishFromPublication($id: ID!, $input: [PublicationInput!]!) {
+      publishableUnpublish(id: $id, input: $input) { publishable { id } userErrors { field message } }
+    }`,
+    { id: shopifyProductId, input: [{ publicationId }] },
+  );
+  const mutation = result.publishableUnpublish;
+  if (!mutation) throw new Error('Shopify returned no online store unpublish result.');
+  if (mutation.userErrors.length) throw new Error(mutationErrors(mutation.userErrors));
+};
+
 export const publishProduct = async (product: ProductDraft): Promise<ProductPublishResult> => {
   if (!product.title.trim()) return { status: 'skipped', action: 'skipped', shopifyProductId: null, matchCount: 0, error: 'Title is required.' };
   if (product.suggestedSalePrice === null || !Number.isFinite(product.suggestedSalePrice) || product.suggestedSalePrice <= 0) return { status: 'skipped', action: 'skipped', shopifyProductId: null, matchCount: 0, error: 'A valid suggested sale price is required.' };
@@ -305,13 +360,22 @@ export const publishProduct = async (product: ProductDraft): Promise<ProductPubl
     await updateInventoryItemCost(inventoryItemId, product.unitPrice);
     await updateInventory(inventoryItemId, product.inventoryQuantity);
     if (action === 'created') await addImage(shopifyProductId, product);
-    let collectionError = '';
+    const errors: string[] = [];
     try {
       await manageFeaturedCollection(product, shopifyProductId);
     } catch (collectionErr) {
-      collectionError = collectionErr instanceof Error ? collectionErr.message : 'Featured collection management failed.';
+      errors.push(collectionErr instanceof Error ? collectionErr.message : 'Featured collection management failed.');
     }
-    return { status: 'published', action, shopifyProductId, matchCount: matches.length, error: collectionError };
+    try {
+      if (product.publishToOnlineStore) {
+        await publishToOnlineStore(shopifyProductId);
+      } else {
+        await unpublishFromOnlineStore(shopifyProductId);
+      }
+    } catch (channelErr) {
+      errors.push(channelErr instanceof Error ? channelErr.message : 'Online Store sales channel publish failed.');
+    }
+    return { status: 'published', action, shopifyProductId, matchCount: matches.length, error: errors.join(' ') };
   } catch (error) {
     return { status: 'failed', action: matches.length ? 'updated' : 'created', shopifyProductId: matches[0]?.id ?? null, matchCount: matches.length, error: error instanceof Error ? error.message : 'Shopify publishing failed.' };
   }

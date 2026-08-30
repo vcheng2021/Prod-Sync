@@ -1,5 +1,36 @@
 # eComInt Change History
 
+## 2026-08-30 — VIC-8
+
+### JIRA VIC-8 — Published Product Sales Channel check box
+
+- Added a second checkbox in the product detail editor, **Online Store**, next to the existing **Featured** checkbox. It controls whether a published product appears on the Online Store sales channel in Shopify.
+- The `publishToOnlineStore` flag is app-owned: stored as `publish_to_online_store` in the `products` table (with a backward-compatible migration defaulting to `1`), preserved across workbook merges, and staged in the client dirty-field map before Save.
+- The publisher now resolves the Online Store publication ID once per server session via `publications(first: 25)` and caches it. On publish it calls `publishablePublish` when checked or `publishableUnpublish` when unchecked, accumulating any channel errors alongside featured-collection errors without changing the product's `published` status.
+- Added the `ONLINE_STORE_PUBLICATION_NAME` constant, the `onlineStorePublicationIdCache`, `resolveOnlineStorePublicationId`, `publishToOnlineStore`, and `unpublishFromOnlineStore` functions, plus `PublicationLookup` and `PublicationMutationResponse` interfaces in `productPublisher.ts`.
+- Added the `read_publications` and `write_publications` Shopify scopes to `.env.example`, `docs/SUPPORT.md`, and `docs/ARCHITECTURE.md`.
+- Added the Online Store column to the XLSX export with Yes/No values.
+- Updated `docs/ARCHITECTURE.md` §9 with the Online Store sales channel flow, `docs/SUPPORT.md` §3 and §9 with scope and behavior notes, and `docs/SUPPORT.md` §14 with a troubleshooting entry.
+
+## 2026-08-30 — VIC-4, VIC-6, VIC-7
+
+### JIRA VIC-6 — Add version id on UI
+
+- Added `APP_VERSION` configuration (defaults to `0.1.0`, overridable via `.env`/Docker).
+- The `/api/health` and `/api/ready` endpoints now return the application version.
+- The version is displayed as a tag in the brand bar on both the landing and workspace views.
+
+### JIRA VIC-7 — Clear checked items
+
+- Added a **Clear all checked** button to the toolbar that deselects every checked row across the full catalog, not just visible rows.
+- A count of currently checked items is shown on the button. No other filters or edit state are affected.
+
+### JIRA VIC-4 — Read only field updates
+
+- Reorganized the product detail editor into two labeled groups: **Supplier Data** (read-only) and **App Data** (editable).
+- Product Title, Unit Price, Case Price, and Supplier Stock on Hand are now read-only with a light gray background to indicate they cannot be edited.
+- Suggested Sale Price and Shopify Inventory remain grouped as editable fields.
+
 ## 2026-08-29 — VIC-1
 
 ### JIRA VIC-1 — Centralized port configuration

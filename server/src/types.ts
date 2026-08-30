@@ -37,6 +37,7 @@ export interface ProductDraft {
   validationErrors: string[];
   raw: Record<string, unknown>;
   featured: boolean;
+  publishToOnlineStore: boolean;
 }
 
 export interface DraftSummary {

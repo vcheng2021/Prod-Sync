@@ -17,6 +17,7 @@
   --blue: #6d9aaa;
   --blue-soft: #e3eef1;
   --shadow: 0 12px 30px rgba(37, 49, 40, 0.08);
+  --readonly-bg: #f0efe9;
 }
 
 :root[data-theme='dark'] {
@@ -34,6 +35,7 @@
   --blue: #8fc9da;
   --blue-soft: #1f2f36;
   --shadow: 0 12px 30px rgba(0, 0, 0, 0.4);
+  --readonly-bg: #1f221f;
 }
 
 :root {
@@ -154,6 +156,17 @@ a:hover { text-decoration: underline; }
 }
 .connection-pill.connected .connection-dot { background: var(--accent); }
 .connection-pill.disconnected .connection-dot { background: var(--coral); }
+.version-tag {
+  display: inline-flex;
+  align-items: center;
+  padding: 5px 9px;
+  border: 1px solid var(--line);
+  background: hsla(from var(--panel) 0 0 95 / 0.6);
+  color: var(--muted);
+  border-radius: var(--radius);
+  font: 500 11px/1 var(--mono);
+  letter-spacing: 0.03em;
+}
 
 .header-actions {
   display: flex;
@@ -771,6 +784,34 @@ td small { margin-top: 3px; color: var(--muted); font-size: 11px; }
   background: rgba(109, 154, 170, 0.03);
 }
 .field.dirty > span { color: var(--blue); }
+.field.readonly input {
+  background: var(--readonly-bg);
+  color: var(--ink-soft);
+  cursor: default;
+}
+.field.readonly input:focus {
+  border-color: var(--line);
+  box-shadow: none;
+}
+.field-group {
+  margin-top: 17px;
+}
+.field-group-heading {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 9px;
+}
+.field-group-heading .eyebrow {
+  margin: 0;
+}
+.field-group-heading span {
+  color: var(--muted);
+  font: 11px/1.2 var(--mono);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
 .field-grid {
   display: grid;
   grid-template-columns: repeat(3, 1fr);
@@ -848,9 +889,14 @@ td small { margin-top: 3px; color: var(--muted); font-size: 11px; }
 }
 .image-meta a { color: var(--coral); font-weight: 600; }
 
-/* Featured checkbox in editor panel */
+/* Featured and Online Store checkboxes in editor panel */
 .featured-row {
   margin-top: 17px;
+}
+.featured-row .publish-checkboxes {
+  display: flex;
+  align-items: center;
+  gap: 16px;
 }
 .featured-row label {
   display: flex;

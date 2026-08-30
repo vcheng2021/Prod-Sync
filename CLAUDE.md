@@ -73,7 +73,7 @@ The client proxies `/api` and `/productimage` to `http://localhost:<PORT>` (see 
 
 ### Client (React 19 + Vite, single-file `App.tsx`)
 
-All UI state lives in `App.tsx`. Ordinary field edits are staged in a **dirty-field map** keyed by product ID; **Save** sends only changed allowlisted fields via `PATCH /api/drafts/:draftId/products`. Publishing sends the same staged changes alongside the selected product IDs; the server persists them **before** reading products for Shopify. Column filters, title sort, and pagination are client-side on the loaded catalog.
+All UI state lives in `App.tsx`. Ordinary field edits are staged in a **dirty-field map** keyed by product ID; **Save** sends only changed allowlisted fields via `PATCH /api/drafts/:draftId/products`. Publishing sends the same staged changes alongside the selected product IDs; the server persists them **before** reading products for Shopify. Column filters, title sort, and pagination are client-side on the loaded catalog. The application version (from `APP_VERSION`) is displayed in the brand bar and returned by `/api/health` and `/api/ready`. The toolbar includes a **Clear all checked** button that deselects every checked row across the full catalog regardless of active filters. Supplier-owned fields (Title, Unit Price, Case Price, Supplier Stock on Hand) render as read-only with a light gray background; Suggested Sale Price and Shopify Inventory remain editable.
 
 `api.ts` is a thin typed `fetch` wrapper — it contains **no credentials and no Shopify configuration**.
 
@@ -88,7 +88,8 @@ All UI state lives in `App.tsx`. Ordinary field edits are staged in a **dirty-fi
 
 | Method | Route | Purpose |
 |---|---|---|
-| `GET` | `/api/health` | Express liveness (Docker healthcheck). No Shopify. |
+| `GET` | `/api/health` | Express liveness (Docker healthcheck). No Shopify. Returns `version`. |
+| `GET` | `/api/ready` | App version + Shopify readiness (`shopifyConfigured`, `storeDomain`, `missing`). |
 | `GET` | `/api/drafts/current` | Current draft or null. |
 | `GET` | `/api/drafts/:draftId` | Specific draft + products. |
 | `GET` | `/api/issues?draftId=<id>` | Up to 100 reversed failure records from the log for the draft. |
