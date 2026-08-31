@@ -38,6 +38,7 @@ export interface ProductDraft {
   raw: Record<string, unknown>;
   featured: boolean;
   publishToOnlineStore: boolean;
+  selectedCollectionIds: string[];
 }
 
 export interface DraftSummary {

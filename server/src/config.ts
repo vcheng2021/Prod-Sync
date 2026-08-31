@@ -7,6 +7,27 @@ const parseAllowlist = (value: string | undefined): string[] =>
     .map((entry) => entry.trim().toLowerCase())
     .filter(Boolean);
 
+interface ShopifyCollection {
+  name: string;
+  id: string;
+}
+
+const parseShopifyCollections = (value: string | undefined): ShopifyCollection[] => {
+  if (!value) return [];
+  return value
+    .split(',')
+    .map((entry) => entry.trim())
+    .filter(Boolean)
+    .map((entry) => {
+      const colonIndex = entry.indexOf(':');
+      if (colonIndex === -1) return null;
+      const name = entry.slice(0, colonIndex).trim();
+      const id = entry.slice(colonIndex + 1).trim();
+      return name && id ? { name, id } : null;
+    })
+    .filter((entry): entry is ShopifyCollection => entry !== null);
+};
+
 export const config = {
   appVersion: process.env.APP_VERSION ?? '0.1.0',
   port: Number(process.env.PORT ?? 8787),
@@ -19,6 +40,7 @@ export const config = {
   logDirectory: path.resolve(process.cwd(), process.env.LOG_DIRECTORY ?? './logs'),
   shopifyLocationId: process.env.SHOPIFY_LOCATION_ID ?? '',
   shopifyFeaturedCollectionId: process.env.SHOPIFY_FEATURED_COLLECTION_ID ?? '',
+  shopifyCollections: parseShopifyCollections(process.env.SHOPIFY_COLLECTION_ID),
   maxImportRows: Number(process.env.MAX_IMPORT_ROWS ?? 10000),
   defaultWorkbookPath: path.resolve(process.cwd(), 'suppliers', 'sup2_paramountliquor.xlsx'),
   sourceRequestTimeoutMs: Number(process.env.SOURCE_REQUEST_TIMEOUT_MS ?? 12_000),

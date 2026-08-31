@@ -946,6 +946,50 @@ td small { margin-top: 3px; color: var(--muted); font-size: 11px; }
 .validation-box strong { margin-bottom: 3px; }
 .publish-issue { margin-top: 12px; }
 
+/* Collection selector */
+.collection-selector {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.collection-selector label {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.collection-selector label span {
+  color: var(--muted);
+  font: 11px/1.2 var(--mono);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+.collection-selector select {
+  min-height: 120px;
+  max-height: 200px;
+  width: 100%;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  padding: 9px 11px;
+  color: var(--ink);
+  background: var(--panel);
+  font: 14px/1.45 var(--sans);
+  outline: none;
+  transition: border-color var(--transition), box-shadow var(--transition);
+}
+.collection-selector select:focus {
+  border-color: var(--blue);
+  box-shadow: 0 0 0 3px rgba(109, 154, 170, 0.16);
+}
+.collection-selector select:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+.collection-hint {
+  color: var(--muted);
+  font: 11px/1.2 var(--mono);
+  margin: 0;
+}
+
 /* ── Issues log panel ── */
 .issues-log {
   margin-top: 18px;

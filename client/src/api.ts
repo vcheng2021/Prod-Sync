@@ -38,6 +38,7 @@ export interface ProductDraft {
   raw: Record<string, unknown>;
   featured: boolean;
   publishToOnlineStore: boolean;
+  selectedCollectionIds: string[];
 }
 
 export interface DraftResponse {
@@ -122,14 +123,19 @@ export const refreshProduct = (draftId: string, productId: string): Promise<Prod
 export const retrieveProduct = (draftId: string, productId: string): Promise<ProductDraft> =>
   requestJson<ProductDraft>(`/api/drafts/${draftId}/products/${productId}/retrieve`, { method: 'POST' });
 
-export const publishProducts = (draftId: string, productIds: string[], changes: Array<{ id: string; changes: Partial<ProductDraft> }> = []): Promise<{ results: Array<{ productId: string; status: PublishStatus; error: string }>; draft: DraftResponse }> =>
+export const publishProducts = (draftId: string, productIds: string[], changes: Array<{ id: string; changes: Partial<ProductDraft> }> = [], globalCollectionIds: string[] = []): Promise<{ results: Array<{ productId: string; status: PublishStatus; error: string }>; draft: DraftResponse }> =>
   requestJson(`/api/drafts/${draftId}/publish`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ confirmed: true, productIds, changes }),
+    body: JSON.stringify({ confirmed: true, productIds, changes, globalCollectionIds }),
   });
 
 export const exportDraftUrl = (draftId: string): string => `/api/drafts/${draftId}/export`;
+
+export interface CollectionOption {
+  name: string;
+  id: string;
+}
 
 export interface ReadinessStatus {
   ok: boolean;
@@ -137,6 +143,7 @@ export interface ReadinessStatus {
   shopifyConfigured: boolean;
   storeDomain: string;
   missing: string[];
+  collections: CollectionOption[];
 }
 
 export const getReadiness = (): Promise<ReadinessStatus> =>

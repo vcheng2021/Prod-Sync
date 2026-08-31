@@ -193,11 +193,14 @@ const addImage = async (productId: string, product: ProductDraft): Promise<void>
   if (errors.length) throw new Error(mutationErrors(errors));
 };
 
+const toCollectionGid = (id: string): string =>
+  id.startsWith('gid://') ? id : `gid://shopify/Collection/${id}`;
+
 const FEATURED_COLLECTION_TITLE = 'Featured Collection';
 const FEATURED_COLLECTION_HANDLE = 'featured-collection';
 
 const resolveFeaturedCollectionId = async (): Promise<string> => {
-  if (config.shopifyFeaturedCollectionId) return config.shopifyFeaturedCollectionId;
+  if (config.shopifyFeaturedCollectionId) return toCollectionGid(config.shopifyFeaturedCollectionId);
   const data = await shopifyAdminClient.request<FeaturedCollectionLookup>(
     `query FeaturedCollection($handle: String!) {
       collections(first: 1, query: $handle) {
@@ -251,6 +254,13 @@ const manageFeaturedCollection = async (product: ProductDraft, shopifyProductId:
     await addProductToCollection(shopifyProductId, collectionId);
   } else {
     await removeProductFromCollection(shopifyProductId, collectionId);
+  }
+};
+
+const manageCollections = async (product: ProductDraft, shopifyProductId: string): Promise<void> => {
+  if (!product.selectedCollectionIds || product.selectedCollectionIds.length === 0) return;
+  for (const collectionId of product.selectedCollectionIds) {
+    await addProductToCollection(shopifyProductId, toCollectionGid(collectionId));
   }
 };
 
@@ -365,6 +375,11 @@ export const publishProduct = async (product: ProductDraft): Promise<ProductPubl
       await manageFeaturedCollection(product, shopifyProductId);
     } catch (collectionErr) {
       errors.push(collectionErr instanceof Error ? collectionErr.message : 'Featured collection management failed.');
+    }
+    try {
+      await manageCollections(product, shopifyProductId);
+    } catch (collectionErr) {
+      errors.push(collectionErr instanceof Error ? collectionErr.message : 'Collection assignment failed.');
     }
     try {
       if (product.publishToOnlineStore) {

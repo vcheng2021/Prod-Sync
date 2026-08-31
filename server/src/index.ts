@@ -46,6 +46,7 @@ app.get('/api/ready', (_request, response) => {
     shopifyConfigured: missing.length === 0,
     storeDomain: config.storeDomain,
     missing,
+    collections: config.shopifyCollections,
   });
 });
 app.use(createImportRouter(store, logger));

@@ -28,6 +28,10 @@ export const createPublishingRouter = (store: DraftStore, logger: AppLogger): Ro
       if (changes !== undefined && (!Array.isArray(changes) || changes.some((entry) => !entry || typeof entry.id !== 'string' || !entry.changes || typeof entry.changes !== 'object' || Array.isArray(entry.changes)))) {
         return response.status(400).json({ error: 'Expected changes with an id and changes object.' });
       }
+      const globalCollectionIds = request.body?.globalCollectionIds;
+      if (globalCollectionIds !== undefined && (!Array.isArray(globalCollectionIds) || globalCollectionIds.some((entry) => typeof entry !== 'string'))) {
+        return response.status(400).json({ error: 'Expected globalCollectionIds to be an array of strings.' });
+      }
       if (changes?.length) store.updateProducts(request.params.draftId, changes as Array<{ id: string; changes: Partial<ProductDraft> }>);
       const draft = store.getDraft(request.params.draftId);
       const requestedIds = Array.isArray(request.body.productIds) ? new Set(request.body.productIds as string[]) : null;
@@ -36,8 +40,12 @@ export const createPublishingRouter = (store: DraftStore, logger: AppLogger): Ro
 
       const results = [];
       for (const product of products) {
+        const publishProductInput: ProductDraft =
+          globalCollectionIds && globalCollectionIds.length
+            ? { ...product, selectedCollectionIds: globalCollectionIds }
+            : product;
         store.savePublishResult(request.params.draftId, product.id, 'publishing', null, '');
-        const result = await publishProduct(product);
+        const result = await publishProduct(publishProductInput);
         store.savePublishResult(request.params.draftId, product.id, result.status, result.shopifyProductId, result.error);
         logger.write('product.publish', result.status === 'published' ? 'success' : 'failure', { draftId: request.params.draftId, productId: product.id, status: result.status, action: result.action, matchCount: result.matchCount, error: result.error });
         results.push({ productId: product.id, ...result });

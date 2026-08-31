@@ -57,6 +57,7 @@ export class DraftStore {
         shopify_match_count INTEGER,
         is_featured INTEGER NOT NULL DEFAULT 0,
         publish_to_online_store INTEGER NOT NULL DEFAULT 1,
+        collection_ids TEXT NOT NULL DEFAULT '[]',
         validation_errors TEXT NOT NULL,
         raw_json TEXT NOT NULL,
         FOREIGN KEY (draft_id) REFERENCES drafts(id)
@@ -92,7 +93,9 @@ export class DraftStore {
     this.addColumnIfMissing('products', 'sale_price_overridden', 'INTEGER NOT NULL DEFAULT 0');
     this.addColumnIfMissing('products', 'is_featured', 'INTEGER NOT NULL DEFAULT 0');
     this.addColumnIfMissing('products', 'publish_to_online_store', 'INTEGER NOT NULL DEFAULT 1');
+    this.addColumnIfMissing('products', 'collection_ids', "TEXT NOT NULL DEFAULT '[]'");
     this.addColumnIfMissing('source_cache', 'parser_version', "TEXT NOT NULL DEFAULT '1'");
+    this.database.exec("UPDATE products SET collection_ids = '[]' WHERE collection_ids IS NULL OR collection_ids = ''");
     this.migrateLegacyCurrentDraft();
     this.database.exec("CREATE UNIQUE INDEX IF NOT EXISTS products_supplier_key_idx ON products (draft_id, supplier_product_key_normalized) WHERE supplier_product_key_normalized <> ''");
   }
@@ -154,7 +157,7 @@ export class DraftStore {
   }
 
   private withValidationError(row: ProductRow, message: string): string[] {
-    const errors = JSON.parse(row.validation_errors) as string[];
+    const errors = JSON.parse(row.validation_errors || '[]') as string[];
     return errors.includes(message) ? errors : [...errors, message];
   }
 
@@ -171,8 +174,8 @@ export class DraftStore {
       id, draft_id, row_number, supplier_product_key, supplier_product_key_normalized, image_url, image_status, title, source_url, stock_on_hand, case_price, unit_price, suggested_sale_price, inventory_quantity, sale_price_overridden,
       description_html, brand, country, region, product_type, abv, container_type, style, enrichment_status,
       enrichment_error, enrichment_fetched_at, selected, publish_status, publish_error, shopify_product_id,
-      shopify_match_count, is_featured, publish_to_online_store, validation_errors, raw_json
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`);
+      shopify_match_count, is_featured, publish_to_online_store, collection_ids, validation_errors, raw_json
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`);
     const findProduct = this.database.prepare('SELECT * FROM products WHERE draft_id = ? AND supplier_product_key_normalized = ?') as Database.Statement;
     const updateProduct = this.database.prepare(`UPDATE products SET
       row_number = ?, supplier_product_key = ?, image_url = ?, image_local_filename = ?, image_local_url = ?, image_status = ?, title = ?, source_url = ?, stock_on_hand = ?, case_price = ?, unit_price = ?, suggested_sale_price = ?,
@@ -195,7 +198,7 @@ export class DraftStore {
             product.stockOnHand, product.casePrice, product.unitPrice, product.suggestedSalePrice, product.inventoryQuantity, 0, product.descriptionHtml, product.brand, product.country,
             product.region, product.productType, product.abv, product.containerType, product.style, product.enrichmentStatus,
             product.enrichmentError, product.enrichmentFetchedAt, product.selected ? 1 : 0, product.publishStatus, product.publishError,
-            product.shopifyProductId, product.shopifyMatchCount, product.featured ? 1 : 0, product.publishToOnlineStore ? 1 : 0, JSON.stringify(product.validationErrors), JSON.stringify(product.raw),
+            product.shopifyProductId, product.shopifyMatchCount, product.featured ? 1 : 0, product.publishToOnlineStore ? 1 : 0, JSON.stringify(product.selectedCollectionIds ?? []), JSON.stringify(product.validationErrors), JSON.stringify(product.raw),
           );
           summary.added += 1;
           continue;
@@ -281,7 +284,7 @@ export class DraftStore {
     const columns: Record<string, string> = {
       imageUrl: 'image_url', title: 'title', stockOnHand: 'stock_on_hand', casePrice: 'case_price', unitPrice: 'unit_price',
       suggestedSalePrice: 'suggested_sale_price', inventoryQuantity: 'inventory_quantity', descriptionHtml: 'description_html', brand: 'brand', country: 'country', region: 'region', productType: 'product_type',
-      abv: 'abv', containerType: 'container_type', style: 'style', selected: 'selected', featured: 'is_featured', publishToOnlineStore: 'publish_to_online_store',
+      abv: 'abv', containerType: 'container_type', style: 'style', selected: 'selected', featured: 'is_featured', publishToOnlineStore: 'publish_to_online_store', selectedCollectionIds: 'collection_ids',
     };
     const transaction = this.database.transaction(() => {
       const now = new Date().toISOString();
@@ -293,7 +296,7 @@ export class DraftStore {
         if (!existing) throw new Error(`Product ${update.id} was not found in this catalog.`);
         if (!keys.length) continue;
         const assignments = keys.map((key) => `${columns[key]} = ?`);
-        const values = keys.map((key) => (key === 'selected' || key === 'featured') ? (changes[key] ? 1 : 0) : changes[key]);
+        const values = keys.map((key) => (key === 'selected' || key === 'featured' || key === 'publishToOnlineStore') ? (changes[key] ? 1 : 0) : key === 'selectedCollectionIds' ? JSON.stringify(changes[key] ?? []) : changes[key]);
         if (keys.includes('suggestedSalePrice')) assignments.push('sale_price_overridden = 1');
         values.push(update.id, draftId);
         this.database.prepare(`UPDATE products SET ${assignments.join(', ')} WHERE id = ? AND draft_id = ?`).run(...values);
@@ -335,7 +338,7 @@ export class DraftStore {
 
   getCachedEnrichment(url: string): { details: EnrichedProductDetails; status: ProductDraft['enrichmentStatus']; error: string; fetchedAt: string } | null {
     const row = this.database.prepare('SELECT * FROM source_cache WHERE url = ? AND parser_version = ?').get(url, ENRICHMENT_CACHE_VERSION) as CacheRow | undefined;
-    return row ? { details: JSON.parse(row.details_json) as EnrichedProductDetails, status: row.status as ProductDraft['enrichmentStatus'], error: row.error, fetchedAt: row.fetched_at } : null;
+    return row ? { details: JSON.parse(row.details_json || '{}') as EnrichedProductDetails, status: row.status as ProductDraft['enrichmentStatus'], error: row.error, fetchedAt: row.fetched_at } : null;
   }
 
   saveCachedEnrichment(url: string, result: { details: EnrichedProductDetails; status: ProductDraft['enrichmentStatus']; error: string }): void {
@@ -353,7 +356,7 @@ export class DraftStore {
   }
 
   private toProduct(row: ProductRow): ProductDraft {
-    const validationErrors = (JSON.parse(row.validation_errors) as string[]).filter((error) =>
+    const validationErrors = (JSON.parse(row.validation_errors || '[]') as string[]).filter((error) =>
       error !== 'Duplicate title in this import.' &&
       !(row.unit_price === null && error === 'Unit price must be greater than zero (column J).'));
     return {
@@ -364,8 +367,9 @@ export class DraftStore {
       abv: row.abv, containerType: row.container_type, style: row.style, enrichmentStatus: row.enrichment_status as ProductDraft['enrichmentStatus'],
       enrichmentError: row.enrichment_error, enrichmentFetchedAt: row.enrichment_fetched_at, selected: Boolean(row.selected), publishStatus: row.publish_status as PublishStatus,
       publishError: row.publish_error, shopifyProductId: row.shopify_product_id, shopifyMatchCount: row.shopify_match_count,
-      validationErrors, raw: JSON.parse(row.raw_json) as Record<string, unknown>, featured: Boolean(row.is_featured),
+      validationErrors, raw: JSON.parse(row.raw_json || '{}') as Record<string, unknown>, featured: Boolean(row.is_featured),
       publishToOnlineStore: Boolean(row.publish_to_online_store),
+      selectedCollectionIds: JSON.parse(row.collection_ids || '[]') as string[],
     };
   }
 }
@@ -376,6 +380,6 @@ type ProductRow = {
   stock_on_hand: number | null; case_price: number | null; unit_price: number | null; suggested_sale_price: number | null; inventory_quantity: number; sale_price_overridden: number; description_html: string; brand: string;
   country: string; region: string; product_type: string; abv: string; container_type: string; style: string; enrichment_status: string;
   enrichment_error: string; enrichment_fetched_at: string | null; selected: number; publish_status: string; publish_error: string;
-  shopify_product_id: string | null; shopify_match_count: number | null; is_featured: number; publish_to_online_store: number; validation_errors: string; raw_json: string;
+  shopify_product_id: string | null; shopify_match_count: number | null; is_featured: number; publish_to_online_store: number; collection_ids: string; validation_errors: string; raw_json: string;
 };
 type CacheRow = { details_json: string; status: string; error: string; fetched_at: string; parser_version: string };

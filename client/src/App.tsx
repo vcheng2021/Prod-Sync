@@ -281,6 +281,7 @@ function AppContent() {
   const [logIssues, setLogIssues] = useState<LogIssue[]>([])
   const [readiness, setReadiness] = useState<ReadinessStatus | null>(null)
   const [clearingChecked, setClearingChecked] = useState(false)
+  const [globalCollectionIds, setGlobalCollectionIds] = useState<string[]>([])
 
   const activeProduct =
     draft?.products.find((product) => product.id === activeProductId) ??
@@ -543,6 +544,7 @@ function AppContent() {
     setLogIssues([])
     setPurgeOpen(false)
     setPurgeConfirmation('')
+    setGlobalCollectionIds([])
   }
 
   const handleResetPage = () => {
@@ -575,6 +577,7 @@ function AppContent() {
     setClearingChecked(true)
     const selected = draft.products.filter((product) => product.selected)
     for (const product of selected) patchProduct(product.id, { selected: false })
+    setGlobalCollectionIds([])
     setClearingChecked(false)
   }
 
@@ -691,6 +694,7 @@ function AppContent() {
         draft.draft.id,
         validSelectedProducts.map((product) => product.id),
         publishChanges,
+        globalCollectionIds,
       )
       setDraft(result.draft)
       setDirtyFields((current) => {
@@ -1234,6 +1238,50 @@ function AppContent() {
                   <h2>Product detail</h2>
                 </div>
                 {renderStatus(activeProduct.enrichmentStatus)}
+              </div>
+
+              {/* ── Global settings: collections ── */}
+              <div className="field-group">
+                <div className="field-group-heading">
+                  <div className="eyebrow">GLOBAL SETTINGS</div>
+                  <span>Applies to checked products on publish</span>
+                </div>
+                <div className="collection-selector">
+                  <label>
+                    <span>Collections</span>
+                    <select
+                      multiple
+                      size={Math.min(Math.max(readiness?.collections?.length ?? 0, 4), 8)}
+                      value={globalCollectionIds}
+                      onChange={(event) => {
+                        const selected = Array.from(event.target.selectedOptions).map((opt) => opt.value)
+                        setGlobalCollectionIds(selected)
+                      }}
+                      disabled={publishing}
+                    >
+                      {(readiness?.collections ?? []).map((collection) => (
+                        <option key={collection.id} value={collection.id}>
+                          {collection.name}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  {globalCollectionIds.length > 0 && (
+                    <button
+                      type="button"
+                      className="text-button"
+                      disabled={publishing}
+                      onClick={() => setGlobalCollectionIds([])}
+                    >
+                      Clear selection
+                    </button>
+                  )}
+                </div>
+                {globalCollectionIds.length > 0 && (
+                  <small className="collection-hint">
+                    {globalCollectionIds.length} collection{globalCollectionIds.length === 1 ? '' : 's'} selected for the next {selectedProducts.length} checked product{selectedProducts.length === 1 ? '' : 's'}.
+                  </small>
+                )}
               </div>
 
               <div className="field-group">

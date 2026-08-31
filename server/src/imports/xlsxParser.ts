@@ -143,6 +143,7 @@ export const parseWorkbook = (buffer: Buffer, draftId: string): ParsedWorkbook =
       raw: rawColumns(row, headers),
       featured: false,
       publishToOnlineStore: true,
+      selectedCollectionIds: [],
     });
 
     if (validationErrors.length > 0) {
