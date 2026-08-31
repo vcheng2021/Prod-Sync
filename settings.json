@@ -8,7 +8,7 @@
     "ANTHROPIC_DEFAULT_SONNET_MODEL": "poolside/laguna-s-2.1:free",
     "ANTHROPIC_DEFAULT_HAIKU_MODEL": "poolside/laguna-s-2.1:free",
     "CLAUDE_CODE_SUBAGENT_MODEL": "google/gemma-4-26b-a4b-it:free",
-    "ANTHROPIC_DEFAULT_MODEL": "nvidia/nemotron-3-ultra-550b-a55b:free"
+    "ANTHROPIC_DEFAULT_MODEL": "poolside/laguna-s-2.1:free"
   },
   "permissions": {
     "defaultMode": "auto"
