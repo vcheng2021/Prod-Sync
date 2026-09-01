@@ -8,3 +8,5 @@ data/
 *.log
 logs/
 productimage/
+settings.json
+settings.local.json
