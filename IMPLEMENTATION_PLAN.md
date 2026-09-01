@@ -81,14 +81,15 @@ These values will appear in an editable `About this product` area. The same area
 6. Provide a filtering dropdown for every visible column. Each dropdown supports searching and multi-selecting unique values, and active filters combine across columns.
 7. Provide title sorting with ascending and descending options while preserving checkbox selections and edits.
 8. Restore the current catalog from SQLite on app startup. Keep ordinary UI edits staged in the browser and persist only changed fields when the top-level Save button is pressed.
-9. Show a publish review containing selected rows, changed fields, validation warnings, and Shopify create/update decisions.
-10. Require a final checkbox confirmation before posting.
-11. Publish only checked and valid rows to Shopify, persisting any staged changes before the server reads the selected products.
-12. Show per-row pending, success, failed, skipped, and retry states.
-13. Persist a publish history with timestamps, source rows, Shopify IDs, outcomes, and error details. Surface physical log failures from the Posting issues metric.
-14. Provide a guarded Purge database action that clears local catalog content, cached source data, publish history, and application-owned downloaded images while retaining the SQLite schema and physical log.
-15. Provide a non-destructive Reset page action that clears the client screen, filters, selections, messages, modal state, and unsaved edits.
-16. Package the app as a single-instance production Docker image with persistent database, log, and image storage.
+9. Allow loading a new or updated workbook from the workspace toolbar via the Load workbook button, merging new and existing rows into the current SQLite draft while preserving app-owned fields.
+10. Show a publish review containing selected rows, changed fields, validation warnings, and Shopify create/update decisions.
+11. Require a final checkbox confirmation before posting.
+12. Publish only checked and valid rows to Shopify, persisting any staged changes before the server reads the selected products.
+13. Show per-row pending, success, failed, skipped, and retry states.
+14. Persist a publish history with timestamps, source rows, Shopify IDs, outcomes, and error details. Surface physical log failures from the Posting issues metric.
+15. Provide a guarded Purge database action that clears local catalog content, cached source data, publish history, and application-owned downloaded images while retaining the SQLite schema and physical log.
+16. Provide a non-destructive Reset page action that clears the client screen, filters, selections, messages, modal state, and unsaved edits.
+17. Package the app as a single-instance production Docker image with persistent database, log, and image storage.
 
 ## Shopify Integration
 

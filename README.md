@@ -18,13 +18,13 @@ The server persists its catalog in SQLite, writes operational events to `logs/ec
 
 ## Application workflow
 
-1. Import an `.xlsx` workbook. Column B is the stable supplier product key; matching rows merge into the existing SQLite catalog.
+1. Import an `.xlsx` workbook. Column B is the stable supplier product key; matching rows merge into the existing SQLite catalog. Use the **Load workbook** button in the workspace toolbar at any time to load additional products or refresh existing products without resetting the page.
 2. Check rows and explicitly retrieve source details or images. Checking a row alone does not make a supplier request.
 3. Edit any supported product field. Ordinary edits remain in the browser dirty-field map until **Save changes** is pressed.
 4. Open the posting review. The publish request includes the staged field changes and persists them transactionally before Shopify receives the product, so the posted values match the review values. Suggested sale price becomes the Shopify variant retail price; unit price becomes Shopify's inventory-item cost; the app brand becomes the Shopify product vendor, the app product type becomes the Shopify product type, and tags are derived from a non-empty subset of brand, product type, and country.
 5. Select the **Posting issues** metric to read failure entries from `logs/ecomint.log`. The view includes timestamps, event names, product IDs, Shopify field paths, and error messages.
 
-The **Reset page** action clears the current screen, filters, selections, messages, issue view, and unsaved browser state without deleting SQLite data. Use **Purge database** only when the local catalog, cache, publish history, and downloaded application-owned images should be deleted.
+The **Reset page** action clears the current screen, filters, selections, messages, issue view, and unsaved browser state without deleting SQLite data. Use **Purge database** only when the local catalog, cache, publish history, and downloaded application-owned images should be deleted. The **Load workbook** button provides a non-destructive alternative to Reset page for importing a new or updated workbook into the existing catalog.
 
 Shopify API version `2026-07` requires an `@idempotent` key on inventory mutations. The publisher supplies a new key for inventory activation and quantity updates. The installed Shopify app/token must still be reauthorized with `write_inventory` and permission to manage the configured location. Shopify's variant `unitPrice` is calculated from unit-price measurements; the editable Shopify field updated by this app is inventory-item `cost`, displayed as "Cost per item".
 

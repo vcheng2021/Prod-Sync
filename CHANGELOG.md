@@ -1,5 +1,16 @@
 # eComInt Change History
 
+## 2026-09-02 — VIC-10
+
+### JIRA VIC-10 — Data Refresh and load options
+
+- Added a **Load workbook** button to the workspace toolbar that opens a file picker and imports an `.xlsx` workbook directly from the workspace view. Previously, the only way to import a new or updated workbook was to click **Reset page** (which clears the visible draft without touching SQLite), return to the landing page upload zone, and then upload. Now admins can load additional products or refresh existing products in the SQLite DB without resetting the page.
+- The Load workbook button calls the existing `handleImport()` flow, which sends the file to `POST /api/imports`. The server's `mergeWorkbook()` merges the incoming rows by normalized column-B key into the current SQLite draft, preserving all app-owned fields (Shopify inventory, manually edited sale prices, descriptions, selection state, enrichment state, and Shopify publish/history state).
+- The button is disabled during Save, Publish, and busy states to prevent concurrent operations.
+- No changes to the server startup/restore behavior — `GET /api/drafts/current` already loads the saved catalog on application startup and after any server restart, confirming the first part of VIC-10 was already working: the app checks the SQLite DB for existing records and displays them in the UI.
+- Updated `docs/ARCHITECTURE.md` §3 (client responsibilities) and §5 (startup state machine) to document the Load workbook toolbar action.
+- Updated `docs/SUPPORT.md` §7 (workbook import and merge) and §14 (troubleshooting) to describe the Load workbook button and its merge behavior.
+
 ## 2026-09-01 — VIC-11, VIC-12
 
 ### JIRA VIC-11 — Supplier Type column (Excel column K)

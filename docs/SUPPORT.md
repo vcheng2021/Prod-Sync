@@ -6,7 +6,7 @@ This runbook is for operators and maintainers of the local eComInt product works
 
 The application stores product data locally in SQLite. A database purge deletes local catalog state but does not delete Shopify products.
 
-> Last updated: 2026-08-30. The runbook covers the current API, issue-log, inventory, reset, version display, and checked-row clearing behavior.
+> Last updated: 2026-09-02. The runbook covers the current API, issue-log, inventory, reset, version display, checked-row clearing behavior, and the Load workbook toolbar button.
 
 ## 2. Prerequisites
 
@@ -133,7 +133,12 @@ If the catalog has been purged, the seed marker remains set. Restarting will lea
 
 ## 7. Workbook import and merge
 
-Select an `.xlsx` workbook in the application. The first worksheet is parsed. Column B is the stable supplier product key and is preserved as text to retain leading zeroes. Column K provides the supplier "Type" (e.g. "Direct from Supplier" / "New"), which is supplier-owned and refreshed on merge.
+Select an `.xlsx` workbook in the application. There are two ways to open the file picker:
+
+1. **Load workbook** button in the workspace toolbar — available at all times when a catalog is loaded, so you can load additional products or refresh existing products without resetting the page.
+2. **Landing-page upload zone** — shown when the catalog is empty or after **Reset page**.
+
+The first worksheet is parsed. Column B is the stable supplier product key and is preserved as text to retain leading zeroes. Column K provides the supplier "Type" (e.g. "Direct from Supplier" / "New"), which is supplier-owned and refreshed on merge. When a workbook is imported into an existing catalog, the merge preserves all app-owned fields (Shopify inventory, manually edited sale prices, descriptions, selection state, enrichment state, and Shopify publish/history state). The import response reports added, updated, unchanged, and invalid rows. Review warnings before publishing.
 
 For a matching normalized column-B key:
 
@@ -164,7 +169,7 @@ The toolbar provides **Select visible** (checks all filtered rows), **Clear visi
 
 In the product detail editor, supplier-owned fields — Product Title, Unit Price, Case Price, and Supplier Stock on Hand — are displayed as read-only with a light gray background. Only Suggested Sale Price and Shopify Inventory are editable in the editor.
 
-**Reset page** clears the visible draft, filters, selections, messages, modal state, issue records, and unsaved browser edits. It does not delete SQLite data. A later browser reload restores the persisted catalog. Use **Purge database** when the local catalog itself must be removed.
+**Reset page** clears the visible draft, filters, selections, messages, modal state, issue records, and unsaved browser edits. It does not delete SQLite data. A later browser reload restores the persisted catalog. Use **Purge database** when the local catalog itself must be removed. To load a new or updated workbook into the existing catalog without resetting, use the **Load workbook** button in the toolbar instead.
 
 ## 9. Source retrieval and publishing
 
@@ -301,6 +306,10 @@ Confirm the editable Shopify inventory is a whole number at least zero and that 
 ### Reset page did not delete the catalog
 
 This is expected. Reset page is a non-destructive client reset that returns to the import screen while leaving SQLite, logs, and images intact. A startup or browser reload restores the saved catalog. Use Purge database and type `PURGE` only when local catalog state must be deleted.
+
+### Want to load a new workbook without resetting
+
+Use the **Load workbook** button in the toolbar. It opens a file picker and imports the selected `.xlsx` workbook, merging new rows and updating existing rows by column-B key. All app-owned fields (sale price overrides, inventory, descriptions, selections, enrichment state, Shopify status) are preserved. You do not need to Reset page first.
 
 ### The Type column (column K) is not showing in imported products
 

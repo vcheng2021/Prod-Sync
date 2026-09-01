@@ -1083,6 +1083,23 @@ function AppContent() {
           >
             Reset page
           </button>
+          <button
+            type="button"
+            className="button button-secondary"
+            disabled={busy || publishing || saving}
+            onClick={() => {
+              const input = document.createElement('input')
+              input.type = 'file'
+              input.accept = '.xlsx'
+              input.onchange = (event: Event) => {
+                const file = (event.target as HTMLInputElement).files?.[0]
+                if (file) void handleImport(file)
+              }
+              input.click()
+            }}
+          >
+            Load workbook
+          </button>
           <a
             className="button button-secondary"
             href={exportDraftUrl(draft.draft.id)}

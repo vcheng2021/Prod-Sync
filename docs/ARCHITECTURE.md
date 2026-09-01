@@ -6,7 +6,7 @@ eComInt is a single-instance internal product operations application. It imports
 
 The application is intentionally stateful. SQLite, the physical event log, and downloaded product images are application data and must be kept on persistent storage. The application is not designed for multiple server instances sharing one SQLite file.
 
-> Last updated: 2026-08-30. This document describes the implemented application behavior, not only the original build plan.
+> Last updated: 2026-09-02. This document describes the implemented application behavior, not only the original build plan.
 
 ## 2. System context
 
@@ -37,13 +37,14 @@ The browser never receives the Shopify Admin token. All supplier network request
 
 `client/src/App.tsx` owns the workspace interaction model:
 
-- loads the current catalog when the application starts;
+- loads the current catalog when the application starts from SQLite;
 - displays the application version in the brand bar;
 - displays searchable, filterable products;
 - stages editable fields in a dirty-field map;
 - submits only changed fields from the top Save button;
 - starts explicit source/image retrieval for checked rows;
 - clears all checked items across the full catalog via a toolbar button;
+- loads new or updated product data from an .xlsx workbook via the **Load workbook** toolbar button without resetting the page;
 - shows publish review and confirmation;
 - opens current-draft failure records from the physical log through the Posting issues metric;
 - resets the visible workspace through Reset page without deleting persisted catalog data;
@@ -116,9 +117,9 @@ Ordinary edits first exist in the browser dirty-field map. Save sends only the c
 4. Mark initialization complete after a successful seed, including a seed with row-level import warnings.
 5. If the database already contains products, restore the current catalog and do not re-seed.
 6. If the default workbook is missing, keep the application usable for explicit upload and log the condition.
-7. On explicit workbook upload, parse and validate the workbook, then merge all valid keys into the current catalog in one SQLite transaction.
+7. On explicit workbook upload — either via the **Load workbook** button in the workspace toolbar or via the landing-page upload zone — parse and validate the workbook, then merge all valid keys into the current catalog in one SQLite transaction.
 
-The default workbook is a first-run seed, not a recurring synchronization source. After a purge, the database remains initialized and the operator must explicitly select a workbook.
+The default workbook is a first-run seed, not a recurring synchronization source. After a purge, the database remains initialized and the operator must explicitly select a workbook. The **Load workbook** toolbar button makes explicit workbook selection available directly from the workspace without requiring a Reset page first.
 
 ## 6. SQLite model
 
@@ -150,7 +151,7 @@ Reads the newest failure entries from `logs/ecomint.log`. When `draftId` is supp
 
 ### `POST /api/imports`
 
-Accepts an `.xlsx` multipart field named `workbook`. If the catalog is empty, it inserts the first catalog. Otherwise it merges by normalized column-B key. The response includes the current draft, worksheet metadata, row-level import errors, and added/updated/unchanged/invalid counts.
+Accepts an `.xlsx` multipart field named `workbook`. If the catalog is empty, it inserts the first catalog. Otherwise it merges by normalized column-B key. The response includes the current draft, worksheet metadata, row-level import errors, and added/updated/unchanged/invalid counts. This endpoint is invoked both from the landing-page upload zone and from the **Load workbook** button in the workspace toolbar.
 
 ### `PATCH /api/drafts/:draftId/products`
 
