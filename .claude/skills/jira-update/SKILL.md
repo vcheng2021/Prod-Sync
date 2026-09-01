@@ -39,6 +39,7 @@ A skill for automatically updating Jira tickets when explicitly referenced in a 
 1. Add a detailed comment via `mcp__atlassian__addCommentToJiraIssue` with the work summary (file paths, results, commands tested).
 2. Log work via `mcp__atlassian__addWorklogToJiraIssue` (default 0.5h if not specified).
 3. If the user explicitly requests it, transition to `Done` — otherwise, leave status as-is and let the user verify.
+4. update app version build id APP_VERSION
 
 ### On `comment`
 1. Add the provided message as a comment via `mcp__atlassian__addCommentToJiraIssue`.

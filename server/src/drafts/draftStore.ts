@@ -44,6 +44,7 @@ export class DraftStore {
         country TEXT NOT NULL,
         region TEXT NOT NULL,
         product_type TEXT NOT NULL,
+        supplier_type TEXT NOT NULL DEFAULT '',
         abv TEXT NOT NULL,
         container_type TEXT NOT NULL,
         style TEXT NOT NULL,
@@ -94,6 +95,7 @@ export class DraftStore {
     this.addColumnIfMissing('products', 'is_featured', 'INTEGER NOT NULL DEFAULT 0');
     this.addColumnIfMissing('products', 'publish_to_online_store', 'INTEGER NOT NULL DEFAULT 1');
     this.addColumnIfMissing('products', 'collection_ids', "TEXT NOT NULL DEFAULT '[]'");
+    this.addColumnIfMissing('products', 'supplier_type', "TEXT NOT NULL DEFAULT ''");
     this.addColumnIfMissing('source_cache', 'parser_version', "TEXT NOT NULL DEFAULT '1'");
     this.database.exec("UPDATE products SET collection_ids = '[]' WHERE collection_ids IS NULL OR collection_ids = ''");
     this.migrateLegacyCurrentDraft();
@@ -153,7 +155,7 @@ export class DraftStore {
   }
 
   private supplierFingerprint(row: ProductRow): string {
-    return JSON.stringify([row.image_url, row.title, row.source_url, row.stock_on_hand, row.case_price, row.unit_price]);
+    return JSON.stringify([row.image_url, row.title, row.source_url, row.stock_on_hand, row.case_price, row.unit_price, row.supplier_type]);
   }
 
   private withValidationError(row: ProductRow, message: string): string[] {
@@ -172,14 +174,14 @@ export class DraftStore {
     const insertDraft = this.database.prepare('INSERT INTO drafts (id, filename, created_at, updated_at) VALUES (?, ?, ?, ?)');
     const insertProduct = this.database.prepare(`INSERT INTO products (
       id, draft_id, row_number, supplier_product_key, supplier_product_key_normalized, image_url, image_status, title, source_url, stock_on_hand, case_price, unit_price, suggested_sale_price, inventory_quantity, sale_price_overridden,
-      description_html, brand, country, region, product_type, abv, container_type, style, enrichment_status,
+      description_html, brand, country, region, product_type, supplier_type, abv, container_type, style, enrichment_status,
       enrichment_error, enrichment_fetched_at, selected, publish_status, publish_error, shopify_product_id,
       shopify_match_count, is_featured, publish_to_online_store, collection_ids, validation_errors, raw_json
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`);
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`);
     const findProduct = this.database.prepare('SELECT * FROM products WHERE draft_id = ? AND supplier_product_key_normalized = ?') as Database.Statement;
     const updateProduct = this.database.prepare(`UPDATE products SET
       row_number = ?, supplier_product_key = ?, image_url = ?, image_local_filename = ?, image_local_url = ?, image_status = ?, title = ?, source_url = ?, stock_on_hand = ?, case_price = ?, unit_price = ?, suggested_sale_price = ?,
-      description_html = ?, brand = ?, country = ?, region = ?, product_type = ?, abv = ?, container_type = ?, style = ?, enrichment_status = ?, enrichment_error = ?, enrichment_fetched_at = ?,
+      description_html = ?, brand = ?, country = ?, region = ?, product_type = ?, supplier_type = ?, abv = ?, container_type = ?, style = ?, enrichment_status = ?, enrichment_error = ?, enrichment_fetched_at = ?,
       validation_errors = ?, raw_json = ? WHERE id = ? AND draft_id = ?`);
     const transaction = this.database.transaction(() => {
       if (!currentDraft) insertDraft.run(draftId, filename, now, now);
@@ -196,7 +198,7 @@ export class DraftStore {
           insertProduct.run(
             product.id, draftId, product.rowNumber, product.supplierProductKey, normalizedKey, product.imageUrl, product.imageStatus, product.title, product.sourceUrl,
             product.stockOnHand, product.casePrice, product.unitPrice, product.suggestedSalePrice, product.inventoryQuantity, 0, product.descriptionHtml, product.brand, product.country,
-            product.region, product.productType, product.abv, product.containerType, product.style, product.enrichmentStatus,
+            product.region, product.productType, product.supplierType, product.abv, product.containerType, product.style, product.enrichmentStatus,
             product.enrichmentError, product.enrichmentFetchedAt, product.selected ? 1 : 0, product.publishStatus, product.publishError,
             product.shopifyProductId, product.shopifyMatchCount, product.featured ? 1 : 0, product.publishToOnlineStore ? 1 : 0, JSON.stringify(product.selectedCollectionIds ?? []), JSON.stringify(product.validationErrors), JSON.stringify(product.raw),
           );
@@ -208,11 +210,11 @@ export class DraftStore {
         const suggestedSalePrice = preserveAutomaticPrice ? product.suggestedSalePrice : existing.suggested_sale_price;
         const sourceChanged = existing.source_url !== product.sourceUrl;
         const imageChanged = existing.image_url !== product.imageUrl;
-        const unchanged = existing.supplier_product_key === product.supplierProductKey && existing.image_url === product.imageUrl && existing.title === product.title && existing.source_url === product.sourceUrl && existing.stock_on_hand === product.stockOnHand && existing.case_price === product.casePrice && existing.unit_price === product.unitPrice;
+        const unchanged = existing.supplier_product_key === product.supplierProductKey && existing.image_url === product.imageUrl && existing.title === product.title && existing.source_url === product.sourceUrl && existing.stock_on_hand === product.stockOnHand && existing.case_price === product.casePrice && existing.unit_price === product.unitPrice && existing.supplier_type === product.supplierType;
         updateProduct.run(
           product.rowNumber, product.supplierProductKey, product.imageUrl, imageChanged ? '' : existing.image_local_filename, imageChanged ? '' : existing.image_local_url, imageChanged ? product.imageStatus : existing.image_status, product.title, product.sourceUrl,
           product.stockOnHand, product.casePrice, product.unitPrice, suggestedSalePrice, sourceChanged ? existing.description_html : existing.description_html,
-          existing.brand, existing.country, existing.region, existing.product_type, existing.abv, existing.container_type, existing.style,
+          existing.brand, existing.country, existing.region, existing.product_type, product.supplierType, existing.abv, existing.container_type, existing.style,
           sourceChanged ? (product.sourceUrl ? 'pending' : 'not-provided') : existing.enrichment_status, sourceChanged ? '' : existing.enrichment_error,
           sourceChanged ? null : existing.enrichment_fetched_at, JSON.stringify(product.validationErrors), JSON.stringify(product.raw), existing.id, draftId,
         );
@@ -363,7 +365,7 @@ export class DraftStore {
       id: row.id, draftId: row.draft_id, rowNumber: row.row_number, imageUrl: row.image_url, imageLocalFilename: row.image_local_filename, imageLocalUrl: row.image_local_url, imageStatus: row.image_status as ProductDraft['imageStatus'],
       supplierProductKey: row.supplier_product_key, title: row.title, sourceUrl: row.source_url, stockOnHand: row.stock_on_hand, casePrice: row.case_price, unitPrice: row.unit_price,
       suggestedSalePrice: row.suggested_sale_price, inventoryQuantity: row.inventory_quantity,
-      descriptionHtml: row.description_html, brand: row.brand, country: row.country, region: row.region, productType: row.product_type,
+      descriptionHtml: row.description_html, brand: row.brand, country: row.country, region: row.region, productType: row.product_type, supplierType: row.supplier_type,
       abv: row.abv, containerType: row.container_type, style: row.style, enrichmentStatus: row.enrichment_status as ProductDraft['enrichmentStatus'],
       enrichmentError: row.enrichment_error, enrichmentFetchedAt: row.enrichment_fetched_at, selected: Boolean(row.selected), publishStatus: row.publish_status as PublishStatus,
       publishError: row.publish_error, shopifyProductId: row.shopify_product_id, shopifyMatchCount: row.shopify_match_count,
@@ -378,7 +380,7 @@ type DraftRow = { id: string; filename: string; created_at: string; updated_at: 
 type ProductRow = {
   id: string; draft_id: string; row_number: number; supplier_product_key: string; supplier_product_key_normalized: string; image_url: string; image_local_filename: string; image_local_url: string; image_status: string; title: string; source_url: string;
   stock_on_hand: number | null; case_price: number | null; unit_price: number | null; suggested_sale_price: number | null; inventory_quantity: number; sale_price_overridden: number; description_html: string; brand: string;
-  country: string; region: string; product_type: string; abv: string; container_type: string; style: string; enrichment_status: string;
+  country: string; region: string; product_type: string; supplier_type: string; abv: string; container_type: string; style: string; enrichment_status: string;
   enrichment_error: string; enrichment_fetched_at: string | null; selected: number; publish_status: string; publish_error: string;
   shopify_product_id: string | null; shopify_match_count: number | null; is_featured: number; publish_to_online_store: number; collection_ids: string; validation_errors: string; raw_json: string;
 };

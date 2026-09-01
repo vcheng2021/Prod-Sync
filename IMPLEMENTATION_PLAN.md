@@ -34,8 +34,9 @@ The app will use the workbook at `suppliers/sup2_paramountliquor.xlsx` as its in
 | G | Supplier stock on hand | Display and edit in the app; used only to initialize Shopify inventory for new products |
 | I | Case price | Display and edit in the app; stored as supplier data and not used as the Shopify retail price |
 | J | Unit price | Supplier cost; used to calculate the initial suggested sale price and update Shopify Cost per item |
+| K | Supplier type | Supplier-owned classification such as "Direct from Supplier" or "New"; refreshed on merge, displayed as read-only, never sent to Shopify |
 
-The product detail editor groups supplier fields (title, unit price, case price, supplier stock on hand) as read-only and app-editable fields (suggested sale price, Shopify inventory) as editable. The UI also stores an editable suggested sale price and a separate Shopify inventory quantity. New rows start with a suggested sale price equal to unit price plus 25%, rounded to cents. Shopify inventory starts at 1 when supplier SOH is greater than 2, otherwise 0. Column B is required; missing or duplicate keys are row-level import errors.
+The product detail editor groups supplier fields (title, unit price, case price, supplier stock on hand, supplier type) as read-only and app-editable fields (suggested sale price, Shopify inventory) as editable. The UI also stores an editable suggested sale price and a separate Shopify inventory quantity. New rows start with a suggested sale price equal to unit price plus 25%, rounded to cents. Shopify inventory starts at 1 when supplier SOH is greater than 2, otherwise 0. Column B is required; missing or duplicate keys are row-level import errors.
 
 The parser must preserve the original spreadsheet row number and raw row data. Missing keys and conflicting duplicate keys should be reported individually rather than silently discarded. Exact duplicate supplier rows may be skipped and reported in the import summary.
 

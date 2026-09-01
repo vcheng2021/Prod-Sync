@@ -75,6 +75,8 @@ The client uses a single-file `App.tsx` with styling in `workspace.css`. The wor
 
 Spreadsheet column B is the stable supplier product key. It is stored as trimmed text so leading zeroes survive parsing. A normalized lower-case value is indexed for matching. Missing keys and conflicting duplicate keys in one incoming workbook are import errors and are not silently guessed. Exact duplicate rows are retained once and reported as skipped duplicates.
 
+The fixed-column mapping is: column A (image URL), column B (supplier product key), column E (title), column F (source URL), column G (stock on hand), column I (case price), column J (unit price), and column K (supplier type — values such as "Direct from Supplier" / "New"). Missing and conflicting column-B keys are row-level import errors, not silent guesses.
+
 Supplier-owned fields are refreshed by a matching workbook:
 
 - supplier product key;
@@ -84,7 +86,8 @@ Supplier-owned fields are refreshed by a matching workbook:
 - supplier source URL;
 - supplier stock on hand;
 - case price;
-- unit price.
+- unit price;
+- supplier type.
 
 Application-owned fields survive a matching workbook merge:
 
@@ -99,7 +102,7 @@ Application-owned fields survive a matching workbook merge:
 
 A new product gets a suggested sale price of `unit price * 1.25`, rounded to cents, when the unit price is valid. Its Shopify inventory defaults to `1` when supplier SOH is greater than `2`, otherwise `0`. Suggested sale price is the editable Shopify retail price. Unit price remains the supplier cost locally and is written to the Shopify inventory item's `cost` field, displayed as Cost per item.
 
-In the editor panel, supplier-owned fields (Product Title, Unit Price, Case Price, and Supplier Stock on Hand) are displayed as read-only with a light gray background. Only app-owned fields (Suggested Sale Price and Shopify Inventory) are editable in the editor.
+In the editor panel, supplier-owned fields (Product Title, Unit Price, Case Price, Supplier Stock on Hand, and Supplier Type) are displayed as read-only with a light gray background. Only app-owned fields (Suggested Sale Price and Shopify Inventory) are editable in the editor.
 
 If an existing suggested sale price still equals the previous automatic 25 percent calculation, a changed unit price recalculates it. Once the operator edits the suggested price, it is treated as an override and later workbooks do not replace it.
 
@@ -275,6 +278,16 @@ This is an internal single-user application. It has no multi-user authorization 
 
 The purge operation is destructive to local catalog state but does not delete Shopify products. It does not remove the physical log. Shopify deletion is never automatic.
 
-## 14. Extension points
+## 14. Column filters
+
+The client filter bar (below the toolbar) supports three filter kinds, configured in `filterFieldConfig` in `client/src/App.tsx`:
+
+- **select**: a checkbox dropdown showing all distinct values for the column. Used for Title (Product), Supplier Type (Type), Image status, Source status, and Shopify status.
+- **range**: an operator select (`>`, `<`, `>=`, `<=`, `=`, `≠`) plus a numeric input. Used for Unit price, Sale price, Case price, Stock, and Shopify inventory.
+- **text**: a pattern input supporting `*` (any characters) and `?` (single character) wildcards, case-insensitive. Used for Product and Description.
+
+Active filter counts are shown on each filter button and in the "Filter columns" label. "Clear filters" resets all column filters and the sort option.
+
+## 15. Extension points
 
 Future work can add a proper migration framework, authentication, multiple catalogs, multi-store inventory, background job queues, remote object storage, structured log shipping, and a managed relational database. Those changes should preserve the column-B identity contract and explicit supplier/user field ownership rules.

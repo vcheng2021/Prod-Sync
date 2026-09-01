@@ -1,5 +1,26 @@
 # eComInt Change History
 
+## 2026-09-01 — VIC-11, VIC-12
+
+### JIRA VIC-11 — Supplier Type column (Excel column K)
+
+- Added `supplierType` field parsed from Excel column K (index 10, values "Direct from Supplier" / "New").
+- `supplierType` is supplier-owned: stored as `supplier_type` in the SQLite `products` table, refreshed on workbook merge, preserved across enrichments, and never sent to Shopify.
+- Added a backward-compatible migration (`ALTER TABLE ADD COLUMN supplier_type TEXT NOT NULL DEFAULT ''`).
+- Added `supplier_type` to the fingerprint used for duplicate-row detection.
+- Added the Type column to the XLSX export.
+- Added a "Type" select filter in the client column filter bar.
+- Updated `docs/ARCHITECTURE.md` §4 (supplier-owned fields) and §6 (filter field reference).
+
+### JIRA VIC-12 — Range and wildcard text column filters
+
+- Refactored the client filter state to support three filter kinds: `select` (checkbox dropdown, unchanged), `range` (operator + numeric input), and `text` (wildcard pattern).
+- Added range filters for Unit price, Sale price, Case price, Stock, and Shopify inventory with operators `>`, `<`, `>=`, `<=`, `=`, `≠`.
+- Added a wildcard text filter for Product Description with `*` (any characters) and `?` (single character) support.
+- Added `RangeFilter` and `TextFilter` components, `compareRange()` and `matchesTextPattern()` helpers, and `numericFilterValue()` for extracting numeric values from products.
+- Added `.range-popover` and `.text-popover` CSS styles in `workspace.css`.
+- Updated `docs/ARCHITECTURE.md` §6 and `docs/SUPPORT.md` §7, §14.
+
 ## 2026-09-01 — VIC-9
 
 ### JIRA VIC-9 — Configured collection assignment and env quote handling

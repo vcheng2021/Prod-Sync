@@ -23,18 +23,33 @@ import './workspace.css'
 const PAGE_SIZE = 40
 type StatusFilter = 'all' | 'pending' | 'ready' | 'failed' | 'published'
 type SortOption = 'none' | 'selected' | 'title-asc' | 'title-desc' | 'source' | 'shopify'
-type FilterField = 'title' | 'unitPrice' | 'suggestedSalePrice' | 'casePrice' | 'stockOnHand' | 'inventoryQuantity' | 'imageStatus' | 'enrichmentStatus' | 'publishStatus'
+type FilterField = 'title' | 'unitPrice' | 'suggestedSalePrice' | 'casePrice' | 'stockOnHand' | 'inventoryQuantity' | 'supplierType' | 'imageStatus' | 'enrichmentStatus' | 'publishStatus' | 'description'
+type FilterKind = 'select' | 'range' | 'text'
+type RangeOperator = '>' | '<' | '>=' | '<=' | '=' | '!='
 
-const filterFields: Array<{ field: FilterField; label: string }> = [
-  { field: 'title', label: 'Product' },
-  { field: 'unitPrice', label: 'Unit price' },
-  { field: 'suggestedSalePrice', label: 'Sale price' },
-  { field: 'casePrice', label: 'Case price' },
-  { field: 'stockOnHand', label: 'Stock' },
-  { field: 'inventoryQuantity', label: 'Shopify inventory' },
-  { field: 'imageStatus', label: 'Image' },
-  { field: 'enrichmentStatus', label: 'Source' },
-  { field: 'publishStatus', label: 'Shopify' },
+interface FilterFieldConfig {
+  field: FilterField
+  label: string
+  kind: FilterKind
+}
+
+type ColumnFilterValue =
+  | { kind: 'select'; values: string[] }
+  | { kind: 'range'; operator: RangeOperator; value: string }
+  | { kind: 'text'; pattern: string }
+
+const filterFieldConfig: FilterFieldConfig[] = [
+  { field: 'title', label: 'Product', kind: 'select' },
+  { field: 'unitPrice', label: 'Unit price', kind: 'range' },
+  { field: 'suggestedSalePrice', label: 'Sale price', kind: 'range' },
+  { field: 'casePrice', label: 'Case price', kind: 'range' },
+  { field: 'stockOnHand', label: 'Stock', kind: 'range' },
+  { field: 'inventoryQuantity', label: 'Shopify inventory', kind: 'range' },
+  { field: 'supplierType', label: 'Type', kind: 'select' },
+  { field: 'imageStatus', label: 'Image', kind: 'select' },
+  { field: 'enrichmentStatus', label: 'Source', kind: 'select' },
+  { field: 'publishStatus', label: 'Shopify', kind: 'select' },
+  { field: 'description', label: 'Description', kind: 'text' },
 ]
 
 const statusText: Record<string, string> = {
@@ -59,9 +74,39 @@ const filterValue = (product: ProductDraft, field: FilterField): string => {
   if (field === 'casePrice') return money(product.casePrice)
   if (field === 'stockOnHand') return product.stockOnHand === null ? '—' : String(product.stockOnHand)
   if (field === 'inventoryQuantity') return String(product.inventoryQuantity)
+  if (field === 'supplierType') return product.supplierType || '—'
   if (field === 'imageStatus') return statusText[product.imageStatus] ?? product.imageStatus
   if (field === 'enrichmentStatus') return statusText[product.enrichmentStatus] ?? product.enrichmentStatus
-  return statusText[product.publishStatus] ?? product.publishStatus
+  if (field === 'publishStatus') return statusText[product.publishStatus] ?? product.publishStatus
+  return product.descriptionHtml || ''
+}
+
+const numericFilterValue = (product: ProductDraft, field: FilterField): number | null => {
+  if (field === 'unitPrice') return product.unitPrice
+  if (field === 'suggestedSalePrice') return product.suggestedSalePrice
+  if (field === 'casePrice') return product.casePrice
+  if (field === 'stockOnHand') return product.stockOnHand
+  if (field === 'inventoryQuantity') return product.inventoryQuantity
+  return null
+}
+
+const compareRange = (value: number | null, operator: RangeOperator, target: number | null): boolean => {
+  if (value === null || target === null || Number.isNaN(target)) return false
+  if (operator === '>') return value > target
+  if (operator === '<') return value < target
+  if (operator === '>=') return value >= target
+  if (operator === '<=') return value <= target
+  if (operator === '=') return value === target
+  return value !== target
+}
+
+const matchesTextPattern = (text: string, pattern: string): boolean => {
+  if (!pattern.trim()) return true
+  const regex = pattern
+    .replace(/[.+^${}()|[\]\\]/g, '\\$&')
+    .replace(/\?/g, '.')
+    .replace(/\*/g, '.*')
+  return new RegExp(`^${regex}$`, 'i').test(text)
 }
 
 interface FilterMenuProps {
@@ -115,6 +160,87 @@ function FilterMenu({ label, options, selected, onChange }: FilterMenuProps) {
             type="button"
             className="text-button"
             onClick={() => onChange([])}
+          >
+            Clear {label}
+          </button>
+        )}
+      </div>
+    </details>
+  )
+}
+
+interface RangeFilterProps {
+  label: string
+  value: { operator: RangeOperator; value: string }
+  onChange: (value: { operator: RangeOperator; value: string }) => void
+}
+
+function RangeFilter({ label, value, onChange }: RangeFilterProps) {
+  return (
+    <details className="column-filter">
+      <summary>
+        {label}
+        {value.value && <span className="filter-count">1</span>}
+      </summary>
+      <div className="range-popover">
+        <select
+          value={value.operator}
+          onChange={(event) => onChange({ operator: event.target.value as RangeOperator, value: value.value })}
+          aria-label={`Comparison operator for ${label}`}
+        >
+          <option value=">">{'>'}</option>
+          <option value="<">{'<'}</option>
+          <option value=">=">{'>='}</option>
+          <option value="<=">{'<='}</option>
+          <option value="=">{'='}</option>
+          <option value="!=">{'≠'}</option>
+        </select>
+        <input
+          type="number"
+          value={value.value}
+          onChange={(event) => onChange({ operator: value.operator, value: event.target.value })}
+          placeholder="Value…"
+          aria-label={`Numeric value for ${label}`}
+        />
+        {value.value && (
+          <button
+            type="button"
+            className="text-button"
+            onClick={() => onChange({ operator: value.operator, value: '' })}
+          >
+            Clear {label}
+          </button>
+        )}
+      </div>
+    </details>
+  )
+}
+
+interface TextFilterProps {
+  label: string
+  pattern: string
+  onChange: (pattern: string) => void
+}
+
+function TextFilter({ label, pattern, onChange }: TextFilterProps) {
+  return (
+    <details className="column-filter">
+      <summary>
+        {label}
+        {pattern && <span className="filter-count">1</span>}
+      </summary>
+      <div className="text-popover">
+        <input
+          value={pattern}
+          onChange={(event) => onChange(event.target.value)}
+          placeholder="Use * and ? wildcards…"
+          aria-label={`Text pattern for ${label}`}
+        />
+        {pattern && (
+          <button
+            type="button"
+            className="text-button"
+            onClick={() => onChange('')}
           >
             Clear {label}
           </button>
@@ -263,7 +389,7 @@ function AppContent() {
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('all')
   const [sortOption, setSortOption] = useState<SortOption>('none')
   const [retrievingBulk, setRetrievingBulk] = useState(false)
-  const [columnFilters, setColumnFilters] = useState<Partial<Record<FilterField, string[]>>>({})
+  const [columnFilters, setColumnFilters] = useState<Partial<Record<FilterField, ColumnFilterValue>>>({})
   const [page, setPage] = useState(1)
   const [activeProductId, setActiveProductId] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
@@ -297,14 +423,19 @@ function AppContent() {
     let mounted = true
     void getCurrentDraft()
       .then((currentDraft) => {
-        if (!mounted || !currentDraft) return
-        setDraft(currentDraft)
-        setActiveProductId(currentDraft.products[0]?.id ?? null)
-        showToast('info', `${currentDraft.products.length.toLocaleString()} products restored from SQLite.`)
+        if (!mounted) return
+        if (currentDraft) {
+          setDraft(currentDraft)
+          setActiveProductId(currentDraft.products[0]?.id ?? null)
+          showToast('info', `${currentDraft.products.length.toLocaleString()} products restored from SQLite.`)
+        }
+        setStartupLoading(false)
       })
       .catch((requestError: unknown) => {
-        if (mounted)
+        if (mounted) {
           showToast('error', requestError instanceof Error ? requestError.message : 'The saved catalog could not be loaded.')
+          setStartupLoading(false)
+        }
       })
     void getReadiness()
       .then((status) => {
@@ -313,9 +444,6 @@ function AppContent() {
       .catch(() => {
         if (mounted) setReadiness(null)
       })
-    void Promise.resolve().then(() => {
-      if (mounted) setStartupLoading(false)
-    })
     return () => {
       mounted = false
     }
@@ -340,13 +468,15 @@ function AppContent() {
   const filterOptions = useMemo(() => {
     const products = draft?.products ?? []
     return Object.fromEntries(
-      filterFields.map(({ field }) => [
-        field,
-        Array.from(
-          new Set(products.map((product) => filterValue(product, field))),
-        ).sort((left, right) => left.localeCompare(right)),
-      ]),
-    ) as Record<FilterField, string[]>
+      filterFieldConfig
+        .filter(({ kind }) => kind === 'select')
+        .map(({ field }) => [
+          field,
+          Array.from(
+            new Set(products.map((product) => filterValue(product, field))),
+          ).sort((left, right) => left.localeCompare(right)),
+        ]),
+    ) as Partial<Record<FilterField, string[]>>
   }, [draft?.products])
 
   const filteredProducts = useMemo(() => {
@@ -366,12 +496,20 @@ function AppContent() {
           (product.enrichmentStatus === 'failed' ||
             product.publishStatus === 'failed')) ||
         (statusFilter === 'published' && product.publishStatus === 'published')
-      const matchesColumns = filterFields.every(({ field }) => {
-        const selectedValues = columnFilters[field] ?? []
-        return (
-          selectedValues.length === 0 ||
-          selectedValues.includes(filterValue(product, field))
-        )
+      const matchesColumns = filterFieldConfig.every(({ field, kind }) => {
+        const filter = columnFilters[field]
+        if (!filter) return true
+        if (kind === 'select') {
+          const values = (filter as { kind: 'select'; values: string[] }).values
+          return values.length === 0 || values.includes(filterValue(product, field))
+        }
+        if (kind === 'range') {
+          const { operator, value } = filter as { kind: 'range'; operator: RangeOperator; value: string }
+          if (!value) return true
+          return compareRange(numericFilterValue(product, field), operator, Number(value))
+        }
+        const pattern = (filter as { kind: 'text'; pattern: string }).pattern
+        return matchesTextPattern(filterValue(product, field), pattern)
       })
       return matchesQuery && matchesStatus && matchesColumns
     })
@@ -889,6 +1027,9 @@ function AppContent() {
             <span>
               <b>J</b> unit price
             </span>
+            <span>
+              <b>K</b> type
+            </span>
           </div>
         </section>
       </main>
@@ -1053,24 +1194,52 @@ function AppContent() {
         <div className="filter-bar-label">
           <span>Filter columns</span>
           <small>
-            {Object.values(columnFilters).reduce(
-              (total, values) => total + (values?.length ?? 0),
-              0,
-            )}{' '}
+            {Object.values(columnFilters).reduce((total, filter) => {
+              if (filter.kind === 'select') return total + filter.values.length
+              if (filter.kind === 'range') return total + (filter.value ? 1 : 0)
+              return total + (filter.pattern ? 1 : 0)
+            }, 0)}{' '}
             active
           </small>
         </div>
-        {filterFields.map(({ field, label }) => (
-          <FilterMenu
-            key={field}
-            label={label}
-            options={filterOptions[field]}
-            selected={columnFilters[field] ?? []}
-            onChange={(values) =>
-              setColumnFilters((current) => ({ ...current, [field]: values }))
-            }
-          />
-        ))}
+        {filterFieldConfig.map(({ field, label, kind }) => {
+          const filter = columnFilters[field]
+          if (kind === 'range') {
+            return (
+              <RangeFilter
+                key={field}
+                label={label}
+                value={filter?.kind === 'range' ? { operator: filter.operator, value: filter.value } : { operator: '=', value: '' }}
+                onChange={(value) =>
+                  setColumnFilters((current) => ({ ...current, [field]: { kind: 'range', operator: value.operator, value: value.value } }))
+                }
+              />
+            )
+          }
+          if (kind === 'text') {
+            return (
+              <TextFilter
+                key={field}
+                label={label}
+                pattern={filter?.kind === 'text' ? filter.pattern : ''}
+                onChange={(pattern) =>
+                  setColumnFilters((current) => ({ ...current, [field]: { kind: 'text', pattern } }))
+                }
+              />
+            )
+          }
+          return (
+            <FilterMenu
+              key={field}
+              label={label}
+              options={filterOptions[field] ?? []}
+              selected={filter?.kind === 'select' ? filter.values : []}
+              onChange={(values) =>
+                setColumnFilters((current) => ({ ...current, [field]: { kind: 'select', values } }))
+              }
+            />
+          )
+        })}
         <label className="filter-field title-sort">
           <span>Sort</span>
           <select

@@ -133,11 +133,11 @@ If the catalog has been purged, the seed marker remains set. Restarting will lea
 
 ## 7. Workbook import and merge
 
-Select an `.xlsx` workbook in the application. The first worksheet is parsed. Column B is the stable supplier product key and is preserved as text to retain leading zeroes.
+Select an `.xlsx` workbook in the application. The first worksheet is parsed. Column B is the stable supplier product key and is preserved as text to retain leading zeroes. Column K provides the supplier "Type" (e.g. "Direct from Supplier" / "New"), which is supplier-owned and refreshed on merge.
 
 For a matching normalized column-B key:
 
-- supplier title, URLs, SOH, case price, unit price, row number, and raw row data are refreshed;
+- supplier title, URLs, SOH, case price, unit price, supplier type, row number, and raw row data are refreshed;
 - Shopify inventory is preserved;
 - manually changed suggested sale price is preserved;
 - a still-automatic suggested sale price follows a changed unit price.
@@ -301,6 +301,14 @@ Confirm the editable Shopify inventory is a whole number at least zero and that 
 ### Reset page did not delete the catalog
 
 This is expected. Reset page is a non-destructive client reset that returns to the import screen while leaving SQLite, logs, and images intact. A startup or browser reload restores the saved catalog. Use Purge database and type `PURGE` only when local catalog state must be deleted.
+
+### The Type column (column K) is not showing in imported products
+
+Confirm the workbook's first worksheet has data in column K (the 11th column). The supplier Type is parsed from column K and values such as "Direct from Supplier" or "New" are stored as the `supplierType` field. If the column is absent or empty in the workbook, the field defaults to an empty string. Re-import a workbook that includes the Type column. The Type column appears as a "Type" select filter in the filter bar.
+
+### Range or text filters are not working
+
+Range filters accept a numeric value and a comparison operator (`>`, `<`, `>=`, `<=`, `=`, `≠`). Products with null or non-numeric values for the selected field are excluded. Text filters support `*` (matches any characters) and `?` (matches exactly one character) wildcards, case-insensitive. Leaving a range value or text pattern empty clears that filter. Click "Clear filters" to reset all column filters and the sort order.
 
 ### Images are missing
 

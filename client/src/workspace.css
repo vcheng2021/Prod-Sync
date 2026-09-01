@@ -519,6 +519,55 @@ a:hover { text-decoration: underline; }
   box-shadow: var(--shadow);
   border-radius: var(--radius);
 }
+.range-popover {
+  position: absolute;
+  z-index: 10;
+  top: calc(100% + 7px);
+  left: 0;
+  width: 240px;
+  padding: 10px;
+  border: 1px solid var(--line);
+  background: var(--panel);
+  box-shadow: var(--shadow);
+  border-radius: var(--radius);
+}
+.range-popover select {
+  width: 100%;
+  min-height: 39px;
+  padding: 9px 11px;
+  margin-bottom: 8px;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  color: var(--ink);
+  background: var(--panel);
+  font: 11px/1 var(--mono);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  outline: none;
+  transition: border-color var(--transition), box-shadow var(--transition);
+}
+.range-popover select:focus {
+  border-color: var(--blue);
+  box-shadow: 0 0 0 3px rgba(109, 154, 170, 0.16);
+}
+.range-popover > input {
+  width: 100%;
+}
+.text-popover {
+  position: absolute;
+  z-index: 10;
+  top: calc(100% + 7px);
+  left: 0;
+  width: 240px;
+  padding: 10px;
+  border: 1px solid var(--line);
+  background: var(--panel);
+  box-shadow: var(--shadow);
+  border-radius: var(--radius);
+}
+.text-popover > input {
+  width: 100%;
+}
 .filter-options {
   max-height: 220px;
   overflow: auto;

@@ -66,7 +66,7 @@ export const parseWorkbook = (buffer: Buffer, draftId: string): ParsedWorkbook =
     const rowNumber = rowIndex + 2;
     const key = textValue(valueAt(row, 1));
     const normalizedKey = normalizeSupplierProductKey(key);
-    if (normalizedKey) keyRows.set(normalizedKey, [...(keyRows.get(normalizedKey) ?? []), { rowNumber, fingerprint: JSON.stringify([row[0], row[1], row[4], row[5], row[6], row[8], row[9]]) }]);
+    if (normalizedKey) keyRows.set(normalizedKey, [...(keyRows.get(normalizedKey) ?? []), { rowNumber, fingerprint: JSON.stringify([row[0], row[1], row[4], row[5], row[6], row[8], row[9], row[10]]) }]);
   });
 
   rows.slice(1).forEach((row, rowIndex) => {
@@ -77,6 +77,7 @@ export const parseWorkbook = (buffer: Buffer, draftId: string): ParsedWorkbook =
     const title = textValue(valueAt(row, 4));
     const sourceUrl = textValue(valueAt(row, 5));
     const stockOnHand = numericValue(valueAt(row, 6));
+    const supplierType = textValue(valueAt(row, 10));
     const casePrice = numericValue(valueAt(row, 8));
     const unitPriceText = textValue(valueAt(row, 9));
     const unitPrice = numericValue(valueAt(row, 9));
@@ -128,6 +129,7 @@ export const parseWorkbook = (buffer: Buffer, draftId: string): ParsedWorkbook =
       country: '',
       region: '',
       productType: '',
+      supplierType,
       abv: '',
       containerType: '',
       style: '',

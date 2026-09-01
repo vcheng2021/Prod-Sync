@@ -23,6 +23,7 @@ export interface ProductDraft {
   country: string;
   region: string;
   productType: string;
+  supplierType: string;
   abv: string;
   containerType: string;
   style: string;
