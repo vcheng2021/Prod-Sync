@@ -12,6 +12,8 @@ interface ShopifyCollection {
   id: string;
 }
 
+const stripQuotes = (value: string): string => value.replace(/^["']|["']$/g, '');
+
 const parseShopifyCollections = (value: string | undefined): ShopifyCollection[] => {
   if (!value) return [];
   return value
@@ -21,8 +23,8 @@ const parseShopifyCollections = (value: string | undefined): ShopifyCollection[]
     .map((entry) => {
       const colonIndex = entry.indexOf(':');
       if (colonIndex === -1) return null;
-      const name = entry.slice(0, colonIndex).trim();
-      const id = entry.slice(colonIndex + 1).trim();
+      const name = stripQuotes(entry.slice(0, colonIndex).trim());
+      const id = stripQuotes(entry.slice(colonIndex + 1).trim());
       return name && id ? { name, id } : null;
     })
     .filter((entry): entry is ShopifyCollection => entry !== null);

@@ -1,5 +1,15 @@
 # eComInt Change History
 
+## 2026-09-01 — VIC-9
+
+### JIRA VIC-9 — Configured collection assignment and env quote handling
+
+- Added `SHOPIFY_COLLECTION_ID` to the server configuration, parsed into a `shopifyCollections` array of `{ name, id }` objects exposed via `GET /api/ready` → `collections`.
+- The editor panel now shows a **Collections** multiselect populated from the readiness endpoint, allowing the operator to assign one or more predefined Shopify custom collections to all checked products at publish time.
+- The publish endpoint accepts `globalCollectionIds` and passes them to `publishProduct`, which calls `collectionAddProducts` for each collection. Collection-management failures are caught and reported in publish errors without failing the product publish itself.
+- Fixed `parseShopifyCollections` in `config.ts` to strip surrounding quotes from parsed collection names and IDs. Without this, `.env` values like `SHOPIFY_COLLECTION_ID="Spirits:314155073588,..."` included the quote characters in the parsed values, causing collection ID lookups to fail.
+- The default app-load restore from SQLite and the workbook merge-without-purge behavior were confirmed already implemented and working: `GET /api/drafts/current` reads the current catalog from SQLite on startup, and `POST /api/imports` merges new or updated rows by normalized column-B key while preserving app-owned fields.
+
 ## 2026-08-30 — VIC-8
 
 ### JIRA VIC-8 — Published Product Sales Channel check box

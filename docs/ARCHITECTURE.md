@@ -214,6 +214,12 @@ On each publish, the publisher adds the product to the collection via `collectCr
 
 When a product has its `publishToOnlineStore` flag set (default on), the publisher publishes the product to the Online Store sales channel on publish via `publishablePublish`, or unpublishes it via `publishableUnpublish` when unchecked. The Online Store publication ID is resolved once per server session by querying `publications(first: 25)` and matching `name` to "Online Store"; the result is cached for the lifetime of the process. Sales-channel publish failures are caught and appended to the publish result's error string without changing the product's publish status from `published`. The `read_publications` and `write_publications` scopes are required for these mutations; the existing `read_products` and `write_products` scopes also remain in effect.
 
+### Configured Collection Assignment
+
+The operator can assign products to predefined Shopify custom collections at publish time. `SHOPIFY_COLLECTION_ID` in `.env` is a comma-separated list of `Name:ID` pairs (e.g. `"Spirits:314155073588,Red Wine:285318578228"`). Surrounding quotes on names and IDs are stripped during parsing. The parsed collection list is exposed on `GET /api/ready` as the `collections` array, rendered as a **Collections** multiselect in the editor panel.
+
+When the operator selects collections and publishes, the `globalCollectionIds` are sent to `POST /api/drafts/:draftId/publish` and applied to every selected product via `collectionAddProducts`. Collection-management failures are caught and reported in the product's publish error string without changing the product's publish status from `published`. The existing `read_products` and `write_products` scopes cover these `collectionAddProducts` mutations; no additional Shopify permissions are required.
+
 ## 10. Logging and redaction
 
 The server appends structured JSON lines to `logs/ecomint.log` by default. Events include startup, seed, restore, merge, Save, retrieval, refresh, publish, purge, validation, and unexpected failures. `AppLogger.readIssues()` reads failure entries in reverse chronological order; `GET /api/issues` exposes at most the 100 newest matching entries to the browser for the Posting issues view.
@@ -258,6 +264,7 @@ Important server variables are:
 - `SHOPIFY_API_VERSION`;
 - `SHOPIFY_LOCATION_ID`;
 - `SHOPIFY_FEATURED_COLLECTION_ID` (optional — the Shopify collection ID to use for featured products; when unset, the publisher searches for or creates a collection with handle `featured-collection`);
+- `SHOPIFY_COLLECTION_ID` (optional — a comma-separated list of `Name:ID` pairs for predefined Shopify custom collections, e.g. `"Spirits:314155073588,Red Wine:285318578228"`; parsed into the `collections` array on `/api/ready`, shown in the editor panel multiselect, and assigned to checked products at publish time via `collectionAddProducts`);
 - source allowlist, timeout, redirect, response-size, image-size, and concurrency settings.
 
 Use `.env.example` as the key reference. The real `.env` is never committed.
