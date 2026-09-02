@@ -122,7 +122,7 @@ export const parseWorkbook = (buffer: Buffer, draftId: string): ParsedWorkbook =
       stockOnHand,
       casePrice,
       unitPrice,
-      suggestedSalePrice: unitPrice === null ? null : currencyValue(unitPrice * 1.25),
+      suggestedSalePrice: unitPrice === null ? null : currencyValue(unitPrice * 1.35),
       inventoryQuantity: stockOnHand !== null && stockOnHand > 2 ? 1 : 0,
       descriptionHtml: '',
       brand: '',
