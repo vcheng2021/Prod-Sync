@@ -55,6 +55,14 @@ export class DraftStore {
         enrichment_status TEXT NOT NULL,
         enrichment_error TEXT NOT NULL,
         enrichment_fetched_at TEXT,
+        enrichment_partial INTEGER NOT NULL DEFAULT 0,
+        failed_enrichment_fields TEXT NOT NULL DEFAULT '[]',
+        supplier TEXT NOT NULL DEFAULT 'cellar',
+        product_attributes TEXT NOT NULL DEFAULT '',
+        product_description TEXT NOT NULL DEFAULT '',
+        aliexpress_images TEXT NOT NULL DEFAULT '[]',
+        original_product_attributes TEXT NOT NULL DEFAULT '',
+        original_product_description TEXT NOT NULL DEFAULT '',
         selected INTEGER NOT NULL,
         publish_status TEXT NOT NULL,
         publish_error TEXT NOT NULL,
@@ -129,6 +137,14 @@ export class DraftStore {
     this.addColumnIfMissing('products', 'collection_ids', "TEXT NOT NULL DEFAULT '[]'");
     this.addColumnIfMissing('products', 'supplier_type', "TEXT NOT NULL DEFAULT ''");
     this.addColumnIfMissing('products', 'source_platform', "TEXT NOT NULL DEFAULT ''");
+    this.addColumnIfMissing('products', 'enrichment_partial', 'INTEGER NOT NULL DEFAULT 0');
+    this.addColumnIfMissing('products', 'failed_enrichment_fields', "TEXT NOT NULL DEFAULT '[]'");
+    this.addColumnIfMissing('products', 'supplier', "TEXT NOT NULL DEFAULT 'cellar'");
+    this.addColumnIfMissing('products', 'product_attributes', "TEXT NOT NULL DEFAULT ''");
+    this.addColumnIfMissing('products', 'product_description', "TEXT NOT NULL DEFAULT ''");
+    this.addColumnIfMissing('products', 'aliexpress_images', "TEXT NOT NULL DEFAULT '[]'");
+    this.addColumnIfMissing('products', 'original_product_attributes', "TEXT NOT NULL DEFAULT ''");
+    this.addColumnIfMissing('products', 'original_product_description', "TEXT NOT NULL DEFAULT ''");
     this.addColumnIfMissing('source_cache', 'parser_version', "TEXT NOT NULL DEFAULT '1'");
     this.addColumnIfMissing('source_cache', 'user_id', "TEXT");
     this.addColumnIfMissing('publish_events', 'user_id', "TEXT");
@@ -220,9 +236,9 @@ export class DraftStore {
     const insertProduct = this.database.prepare(`INSERT INTO products (
       id, draft_id, user_id, row_number, supplier_product_key, supplier_product_key_normalized, image_url, image_urls, image_status, title, source_url, stock_on_hand, case_price, unit_price, suggested_sale_price, inventory_quantity, sale_price_overridden,
       description_html, brand, country, region, product_type, supplier_type, source_platform, abv, container_type, style, enrichment_status,
-      enrichment_error, enrichment_fetched_at, selected, publish_status, publish_error, shopify_product_id,
+      enrichment_error, enrichment_fetched_at, enrichment_partial, failed_enrichment_fields, selected, publish_status, publish_error, shopify_product_id,
       shopify_match_count, is_featured, publish_to_online_store, collection_ids, validation_errors, raw_json
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`);
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`);
     const findProduct = this.database.prepare('SELECT * FROM products WHERE draft_id = ? AND supplier_product_key_normalized = ? AND user_id = ?') as Database.Statement;
     const updateProduct = this.database.prepare(`UPDATE products SET
       row_number = ?, supplier_product_key = ?, image_url = ?, image_urls = ?, image_local_filename = ?, image_local_url = ?, image_status = ?, title = ?, source_url = ?, stock_on_hand = ?, case_price = ?, unit_price = ?, suggested_sale_price = ?,
@@ -241,7 +257,7 @@ export class DraftStore {
             product.id, draftId, userId, product.rowNumber, product.supplierProductKey, normalizedKey, product.imageUrl, JSON.stringify(product.imageUrls ?? []), product.imageStatus, product.title, product.sourceUrl,
             product.stockOnHand, product.casePrice, product.unitPrice, product.suggestedSalePrice, product.inventoryQuantity, 0, product.descriptionHtml, product.brand, product.country,
             product.region, product.productType, product.supplierType, product.sourcePlatform ?? '', product.abv, product.containerType, product.style, product.enrichmentStatus,
-            product.enrichmentError, product.enrichmentFetchedAt, product.selected ? 1 : 0, product.publishStatus, product.publishError,
+            product.enrichmentError, product.enrichmentFetchedAt, product.enrichmentPartial ? 1 : 0, JSON.stringify(product.failedEnrichmentFields ?? []), product.selected ? 1 : 0, product.publishStatus, product.publishError,
             product.shopifyProductId, product.shopifyMatchCount, product.featured ? 1 : 0, product.publishToOnlineStore ? 1 : 0, JSON.stringify(product.selectedCollectionIds ?? []), JSON.stringify(product.validationErrors), JSON.stringify(product.raw),
           );
           summary.added += 1; continue;
@@ -354,10 +370,10 @@ export class DraftStore {
     return updates.map((update) => products.find((product) => product.id === update.id) as ProductDraft);
   }
 
-  saveEnrichment(draftId: string, userId: string, productId: string, result: { status: ProductDraft['enrichmentStatus']; details: EnrichedProductDetails; error: string }): void {
+  saveEnrichment(draftId: string, userId: string, productId: string, result: { status: ProductDraft['enrichmentStatus']; details: EnrichedProductDetails; error: string; enrichmentPartial?: boolean; failedFields?: string[] }): void {
     const now = new Date().toISOString();
-    this.database.prepare(`UPDATE products SET description_html = ?, brand = ?, country = ?, region = ?, product_type = ?, abv = ?, container_type = ?, style = ?, enrichment_status = ?, enrichment_error = ?, enrichment_fetched_at = ? WHERE id = ? AND draft_id = ? AND user_id = ?`)
-      .run(result.details.descriptionHtml, result.details.brand, result.details.country, result.details.region, result.details.productType, result.details.abv, result.details.containerType, result.details.style, result.status, result.error, now, productId, draftId, userId);
+    this.database.prepare(`UPDATE products SET description_html = ?, brand = ?, country = ?, region = ?, product_type = ?, abv = ?, container_type = ?, style = ?, enrichment_status = ?, enrichment_error = ?, enrichment_fetched_at = ?, enrichment_partial = ?, failed_enrichment_fields = ? WHERE id = ? AND draft_id = ? AND user_id = ?`)
+      .run(result.details.descriptionHtml, result.details.brand, result.details.country, result.details.region, result.details.productType, result.details.abv, result.details.containerType, result.details.style, result.status, result.error, now, result.enrichmentPartial ? 1 : 0, JSON.stringify(result.failedFields ?? []), productId, draftId, userId);
     this.database.prepare('UPDATE drafts SET updated_at = ? WHERE id = ? AND user_id = ?').run(now, draftId, userId);
   }
 
@@ -435,7 +451,7 @@ export class DraftStore {
   }
 
   private toSummary(draft: DraftRow, products: ProductRow[]): DraftSummary {
-    return { id: draft.id, filename: draft.filename, createdAt: draft.created_at, updatedAt: draft.updated_at, totalProducts: products.length, selectedProducts: products.filter((product) => product.selected).length, readyProducts: products.filter((product) => product.enrichment_status === 'ready').length, failedProducts: products.filter((product) => product.publish_status === 'failed' || product.publish_status === 'skipped').length };
+    return { id: draft.id, filename: draft.filename, createdAt: draft.created_at, updatedAt: draft.updated_at, totalProducts: products.length, selectedProducts: products.filter((product) => product.selected).length, readyProducts: products.filter((product) => product.enrichment_status === 'ready').length, failedProducts: products.filter((product) => product.publish_status === 'failed' || product.publish_status === 'skipped').length, supplier: products[0]?.supplier ?? 'cellar' };
   }
 
   private toProduct(row: ProductRow): ProductDraft {
@@ -452,6 +468,9 @@ export class DraftStore {
       validationErrors, raw: JSON.parse(row.raw_json || '{}') as Record<string, unknown>, featured: Boolean(row.is_featured),
       publishToOnlineStore: Boolean(row.publish_to_online_store),
       selectedCollectionIds: JSON.parse(row.collection_ids || '[]') as string[],
+      enrichmentPartial: Boolean(row.enrichment_partial), failedEnrichmentFields: JSON.parse(row.failed_enrichment_fields || '[]'),
+      supplier: row.supplier, productAttributes: row.product_attributes, productDescription: row.product_description,
+      aliexpressImages: JSON.parse(row.aliexpress_images || '[]'), originalProductAttributes: row.original_product_attributes, originalProductDescription: row.original_product_description,
     };
   }
 }
@@ -461,7 +480,8 @@ type ProductRow = {
   id: string; draft_id: string; user_id: string; row_number: number; supplier_product_key: string; supplier_product_key_normalized: string; image_url: string; image_urls: string; image_local_filename: string; image_local_url: string; image_status: string; title: string; source_url: string;
   stock_on_hand: number | null; case_price: number | null; unit_price: number | null; suggested_sale_price: number | null; inventory_quantity: number; sale_price_overridden: number; description_html: string; brand: string;
   country: string; region: string; product_type: string; supplier_type: string; source_platform: string; abv: string; container_type: string; style: string; enrichment_status: string;
-  enrichment_error: string; enrichment_fetched_at: string | null; selected: number; publish_status: string; publish_error: string;
+  enrichment_error: string; enrichment_fetched_at: string | null; enrichment_partial: number; failed_enrichment_fields: string; supplier: string; product_attributes: string; product_description: string; aliexpress_images: string; original_product_attributes: string; original_product_description: string;
+  selected: number; publish_status: string; publish_error: string;
   shopify_product_id: string | null; shopify_match_count: number | null; is_featured: number; publish_to_online_store: number; collection_ids: string; validation_errors: string; raw_json: string;
 };
 type CacheRow = { details_json: string; status: string; error: string; fetched_at: string; parser_version: string; user_id?: string };

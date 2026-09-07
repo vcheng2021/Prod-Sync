@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "concurrently -k \"npm run dev:server\" \"npm run dev:client\"",
-    "dev:server": "tsx watch server/src/index.ts",
+    "dev:server": "node node_modules/tsx/dist/cli.mjs watch server/src/index.ts",
     "dev:client": "npm --prefix client run dev",
     "start:app": "powershell -NoProfile -ExecutionPolicy Bypass -File ./start.ps1",
     "stop:app": "powershell -NoProfile -ExecutionPolicy Bypass -File ./stop.ps1",
@@ -14,7 +14,7 @@
     "start": "node server/dist/index.js"
   },
   "dependencies": {
-    "better-sqlite3": "^12.4.1",
+    "better-sqlite3": "^12.9.0",
     "cheerio": "^1.1.2",
     "dotenv": "^17.2.2",
     "express": "^5.1.0",

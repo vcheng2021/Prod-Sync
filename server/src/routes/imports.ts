@@ -32,7 +32,11 @@ export const createImportRouter = (store: DraftStore, logger: AppLogger): Router
       XLSX.utils.book_append_sheet(wb, ws, 'Sheet1');
       const transformedBuffer = Buffer.from(XLSX.write(wb, { bookType: 'xlsx', type: 'buffer' }));
       const parsed = parseWorkbook(transformedBuffer, draftId);
+      if (parsed.invalidRowCount > 0) {
+        logger.writeImportEvent('import.validation_errors', { filename: request.file.originalname, draftId, invalidRowCount: parsed.invalidRowCount, importErrors: parsed.importErrors });
+      }
       if (parsed.products.length > config.maxImportRows) {
+        logger.writeImportEvent('import.too_many_rows', { filename: request.file.originalname, draftId, productCount: parsed.products.length, maxRows: config.maxImportRows });
         return response.status(400).json({ error: `The workbook contains more than ${config.maxImportRows} product rows.` });
       }
       const result = store.mergeWorkbook(request.file.originalname, request.userId!, parsed.products);
@@ -40,6 +44,7 @@ export const createImportRouter = (store: DraftStore, logger: AppLogger): Router
       logger.write('workbook.merge', 'success', { filename: request.file.originalname, ...importSummary, importErrors: parsed.importErrors.length });
       return response.status(200).json({ ...result.draft, sheetName: parsed.sheetName, headers: parsed.headers, importErrors: parsed.importErrors, importSummary });
     } catch (error) {
+      logger.writeImportEvent('import.failure', { filename: request.file?.originalname, draftId: crypto.randomUUID(), error: error instanceof Error ? error.message : 'Import failed.' });
       return next(error);
     }
   });
@@ -58,6 +63,17 @@ export const createImportRouter = (store: DraftStore, logger: AppLogger): Router
       const draftId = typeof request.query.draftId === 'string' ? request.query.draftId : undefined;
       const issues = logger.readIssues().filter((issue) => !draftId || issue.details.draftId === draftId).slice(0, 100);
       return response.json(issues);
+    } catch (error) {
+      return next(error);
+    }
+  });
+
+  router.get('/api/productsload', (request, response, next) => {
+    try {
+      const draftId = typeof request.query.draftId === 'string' ? request.query.draftId : undefined;
+      const entries = logger.readProductsLoad(draftId ? undefined : 100);
+      const filtered = draftId ? entries.filter((entry) => entry.draftId === draftId) : entries;
+      return response.json(filtered.slice(0, 100));
     } catch (error) {
       return next(error);
     }
@@ -124,12 +140,29 @@ export const createImportRouter = (store: DraftStore, logger: AppLogger): Router
         product.sourceUrl ? (async () => {
           const cached = store.getCachedEnrichment(request.userId!, product.sourceUrl);
           const result = cached ?? await fetchProductDetails(product.sourceUrl);
-          if (!cached) store.saveCachedEnrichment(request.userId!, product.sourceUrl, result);
+          if (!cached) store.saveCachedEnrichment(request.userId!, product.sourceUrl, result as { details: typeof result.details; status: typeof result.status; error: string; partialDetails?: Partial<typeof result.details>; failedFields: string[] });
+          const enrichmentPartial = !!(result as { partialDetails?: unknown }).partialDetails;
+          const failedFields = (result as { failedFields?: string[] }).failedFields ?? [];
           store.saveEnrichment(request.params.draftId, request.userId!, product.id, {
             status: result.status,
             details: result.details,
             error: result.error,
+            enrichmentPartial,
+            failedFields,
           });
+          if (enrichmentPartial || failedFields.length > 0) {
+            logger.writeProductsLoad({
+              timestamp: new Date().toISOString(),
+              productId: product.id,
+              supplierProductKey: product.supplierProductKey,
+              title: product.title,
+              sourceUrl: product.sourceUrl,
+              fieldsLoaded: enrichmentPartial ? [] : [],
+              fieldsFailed: failedFields,
+              error: result.error,
+              draftId: request.params.draftId,
+            });
+          }
         })() : Promise.resolve(),
         product.imageUrl ? (async () => {
           const result = await downloadProductImage(product.imageUrl, product.id);

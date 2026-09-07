@@ -2,7 +2,7 @@ import * as cheerio from 'cheerio';
 import type { EnrichedProductDetails } from '../types.js';
 import { plainTextToHtml, sanitizeDescription } from './htmlSanitizer.js';
 
-const fieldAliases: Record<keyof Omit<EnrichedProductDetails, 'descriptionHtml'>, string[]> = {
+const fieldAliases: Record<string, string[]> = {
   brand: ['brand', 'brand name'],
   country: ['country', 'origin'],
   region: ['region'],
@@ -159,8 +159,8 @@ const extractDescription = ($: cheerio.CheerioAPI, structuredProducts: Record<st
 export const extractProductDetails = (html: string): EnrichedProductDetails => {
   const $ = cheerio.load(html);
   const structuredProducts = parseStructuredData($);
-  const details = {} as Omit<EnrichedProductDetails, 'descriptionHtml'>;
-  for (const [field, aliases] of Object.entries(fieldAliases) as [keyof typeof details, string[]][]) {
+  const details: Record<string, string> = {};
+  for (const [field, aliases] of Object.entries(fieldAliases)) {
     const structuredValue = structuredProducts.map((product) => {
       if (field === 'brand') return structuredText(product.brand);
       if (field === 'productType') return structuredText(product.category);
@@ -169,7 +169,7 @@ export const extractProductDetails = (html: string): EnrichedProductDetails => {
     }).find(Boolean) ?? '';
     details[field] = findLabeledValue($, aliases) || structuredValue;
   }
-  return { ...details, descriptionHtml: extractDescription($, structuredProducts) };
+  return { brand: details.brand || '', country: details.country || '', region: details.region || '', productType: details.productType || '', abv: details.abv || '', containerType: details.containerType || '', style: details.style || '', descriptionHtml: extractDescription($, structuredProducts) };
 };
 
 export interface SupplierProductPayload {
@@ -189,7 +189,7 @@ export interface SupplierProductPayload {
   custom_attributesV2?: { items?: Array<{ code?: string; value?: string }> };
 }
 
-const supplierFieldAliases: Record<keyof Omit<EnrichedProductDetails, 'descriptionHtml'>, string[]> = {
+const supplierFieldAliases: Record<string, string[]> = {
   brand: ['brand', 'brand_name', 'brandname', 'manufacturer'],
   country: ['country', 'country_of_origin', 'country_of_manufacture', 'origin'],
   region: ['region', 'wine_region'],
@@ -207,7 +207,7 @@ export const extractSupplierProductDetails = (payload: SupplierProductPayload): 
       .filter((attribute): attribute is { code: string; value: string } => Boolean(attribute.code && attribute.value))
       .map((attribute) => [normalizeAttributeCode(attribute.code), attribute.value.trim()]),
   );
-  const details = {} as Omit<EnrichedProductDetails, 'descriptionHtml'>;
+  const details: Record<string, string> = {};
   for (const [field, aliases] of Object.entries(supplierFieldAliases) as [keyof typeof details, string[]][]) {
     details[field] = aliases.map(normalizeAttributeCode).map((alias) => attributes.get(alias) ?? '').find(Boolean) ?? '';
   }
@@ -220,5 +220,5 @@ export const extractSupplierProductDetails = (payload: SupplierProductPayload): 
   details.style ||= payload.category_level_3?.trim() ?? '';
   if (!details.country && payload.country_of_manufacture) details.country = payload.country_of_manufacture.trim();
   const description = payload.description?.html?.trim() || payload.meta_description?.trim() || '';
-  return { ...details, descriptionHtml: description ? sanitizeDescription(description) || plainTextToHtml(description) : '' };
-};
+  return { brand: details.brand || '', country: details.country || '', region: details.region || '', productType: details.productType || '', abv: details.abv || '', containerType: details.containerType || '', style: details.style || '', descriptionHtml: description ? sanitizeDescription(description) || plainTextToHtml(description) : '' };
+}

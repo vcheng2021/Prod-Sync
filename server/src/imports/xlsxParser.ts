@@ -149,6 +149,14 @@ export const parseWorkbook = (buffer: Buffer, draftId: string): ParsedWorkbook =
       featured: false,
       publishToOnlineStore: true,
       selectedCollectionIds: [],
+      enrichmentPartial: false,
+      failedEnrichmentFields: [],
+      productAttributes: '',
+      productDescription: '',
+      aliexpressImages: [],
+      originalProductAttributes: '',
+      originalProductDescription: '',
+      supplier: 'cellar',
     });
 
     if (validationErrors.length > 0) {

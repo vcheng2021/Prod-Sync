@@ -1,15 +1,9 @@
 import dns from 'node:dns/promises';
 import net from 'node:net';
 import { config } from '../config.js';
-import type { EnrichedProductDetails } from '../types.js';
+import type { EnrichedProductDetails, FetchResult } from '../types.js';
 import { extractProductDetails, extractSupplierProductDetails, type SupplierProductPayload } from './productDetailsExtractor.js';
 import { plainTextToHtml } from './htmlSanitizer.js';
-
-export interface FetchResult {
-  status: 'ready' | 'failed' | 'blocked';
-  details: EnrichedProductDetails;
-  error: string;
-}
 
 const emptyDetails = (): EnrichedProductDetails => ({
   descriptionHtml: '',
@@ -20,6 +14,13 @@ const emptyDetails = (): EnrichedProductDetails => ({
   abv: '',
   containerType: '',
   style: '',
+});
+
+const emptyFetchResult = (): FetchResult => ({
+  status: 'failed',
+  details: emptyDetails(),
+  error: '',
+  failedFields: [],
 });
 
 const isPrivateAddress = (address: string): boolean => {
@@ -143,8 +144,8 @@ export const fetchProductDetails = async (rawUrl: string): Promise<FetchResult> 
       fetchSupplierDescription(url).catch(() => ''),
     ]);
     const mergedSupplierDetails = supplierDetails ? { ...supplierDetails, descriptionHtml: supplierDescription || supplierDetails.descriptionHtml } : null;
-    if (mergedSupplierDetails && Object.values(mergedSupplierDetails).some((value) => value.trim().length > 0)) {
-      return { status: 'ready', details: mergedSupplierDetails, error: '' };
+    if (mergedSupplierDetails && Object.values(mergedSupplierDetails).some((value) => typeof value === 'string' && value.trim().length > 0)) {
+      return { status: 'ready', details: mergedSupplierDetails, error: '', failedFields: [] };
     }
     for (let redirect = 0; redirect <= config.sourceMaxRedirects; redirect += 1) {
       const response = await fetch(url, {
@@ -161,16 +162,38 @@ export const fetchProductDetails = async (rawUrl: string): Promise<FetchResult> 
       if (!response.ok) throw new Error(`Source returned HTTP ${response.status}.`);
       const contentType = response.headers.get('content-type') ?? '';
       if (!contentType.includes('text/html') && !contentType.includes('application/xhtml+xml')) throw new Error('Source did not return an HTML page.');
-      const details = extractProductDetails(await readBody(response));
+      // Partial enrichment: extract each field independently, track failures
+      const html = await readBody(response);
+      const fields = ['descriptionHtml', 'brand', 'country', 'region', 'productType', 'abv', 'containerType', 'style'];
+      const details: EnrichedProductDetails = { descriptionHtml: '', brand: '', country: '', region: '', productType: '', abv: '', containerType: '', style: '' };
+      const failedFields: string[] = [];
+      const partialDetails: Partial<EnrichedProductDetails> = {};
+      for (const field of fields) {
+        try {
+          const value = extractProductDetails(html)[field as keyof EnrichedProductDetails];
+          if (value && typeof value === 'string' && value.trim().length > 0) {
+            ((details as unknown) as Record<string, string>)[field] = value;
+            ((partialDetails as unknown) as Record<string, string>)[field] = value;
+          }
+        } catch {
+          failedFields.push(field);
+        }
+      }
       const hasProductData = Object.values(details).some((value) => value.trim().length > 0);
       if (!hasProductData) throw new Error('No product-specific data was found at the source URL.');
-      return { status: 'ready', details, error: '' };
+      return {
+        status: 'ready',
+        details,
+        error: failedFields.length > 0 ? `Partial enrichment: ${failedFields.join(', ')} failed` : '',
+        partialDetails,
+        failedFields,
+      };
     }
     throw new Error('Source fetch failed.');
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Source fetch failed.';
     const blocked = /blocked|allowlist|HTTPS|credentials|private|Local source/i.test(message);
-    return { status: blocked ? 'blocked' : 'failed', details: emptyDetails(), error: message };
+    return { status: blocked ? 'blocked' : 'failed', details: emptyDetails(), error: message, failedFields: [] };
   }
 };
 

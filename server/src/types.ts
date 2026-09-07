@@ -32,16 +32,28 @@ export interface ProductDraft {
   enrichmentStatus: EnrichmentStatus;
   enrichmentError: string;
   enrichmentFetchedAt: string | null;
+  enrichmentPartial: boolean;
+  failedEnrichmentFields: string[];
   selected: boolean;
   publishStatus: PublishStatus;
   publishError: string;
   shopifyProductId: string | null;
   shopifyMatchCount: number | null;
-  validationErrors: string[];
-  raw: Record<string, unknown>;
+  // VIC-17: AliExpress fields
+  productAttributes: string;
+  productDescription: string;
+  aliexpressImages: string[];
+  originalProductAttributes: string;
+  originalProductDescription: string;
+  // VIC-18: Supplier routing
+  supplier: string;
+  // UI state
   featured: boolean;
   publishToOnlineStore: boolean;
   selectedCollectionIds: string[];
+  // Import validation
+  validationErrors: string[];
+  raw: Record<string, unknown>;
 }
 
 export interface DraftSummary {
@@ -53,6 +65,7 @@ export interface DraftSummary {
   selectedProducts: number;
   readyProducts: number;
   failedProducts: number;
+  supplier: string;
 }
 
 export interface DraftResponse {
@@ -77,4 +90,20 @@ export interface EnrichedProductDetails {
   abv: string;
   containerType: string;
   style: string;
+  // VIC-17: AliExpress-specific fields (may be empty for non-AliExpress)
+  productAttributes?: string;
+  productDescription?: string;
+  aliexpressImages?: string[];
+  // Enrichment metadata
+  enrichmentPartial?: boolean;
+  failedFields?: string[];
+}
+
+export interface FetchResult {
+  status: 'ready' | 'failed' | 'blocked';
+  details: EnrichedProductDetails;
+  error: string;
+  // VIC-16: Partial enrichment support
+  partialDetails?: Partial<EnrichedProductDetails>;
+  failedFields: string[];
 }

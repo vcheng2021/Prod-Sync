@@ -15,10 +15,10 @@ import { createAuthRouter } from './auth/authRouter.js';
 import { createAuthMiddleware } from './auth/authMiddleware.js';
 
 const app = express();
-const logger = new AppLogger(config.logDirectory);
+const logger = new AppLogger(config.logDirectory, config.logDirectory);
 const store = new DraftStore(config.databasePath);
 const authService = new AuthService(config.databasePath);
-const authMiddleware = createAuthMiddleware(authService);
+const authMiddleware = createAuthMiddleware(authService, logger);
 
 // Clean up expired sessions on startup
 authService.cleanupExpiredSessions();

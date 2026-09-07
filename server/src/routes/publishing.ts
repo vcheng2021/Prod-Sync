@@ -47,12 +47,12 @@ export const createPublishingRouter = (store: DraftStore, logger: AppLogger): Ro
         store.savePublishResult(request.params.draftId, request.userId!, product.id, 'publishing', null, '');
         const result = await publishProduct(publishProductInput);
         store.savePublishResult(request.params.draftId, request.userId!, product.id, result.status, result.shopifyProductId, result.error);
-        logger.write('product.publish', result.status === 'published' ? 'success' : 'failure', { draftId: request.params.draftId, productId: product.id, status: result.status, action: result.action, matchCount: result.matchCount, error: result.error });
+        logger.writePublishEvent('product.publish', { draftId: request.params.draftId, productId: product.id, outcome: result.status === 'published' ? 'success' : 'failure', status: result.status, action: result.action, matchCount: result.matchCount, error: result.error });
         results.push({ productId: product.id, ...result });
       }
       return response.json({ results, draft: store.getDraft(request.params.draftId, request.userId!) });
     } catch (error) {
-      logger.write('product.publish', 'failure', { draftId: request.params.draftId, error: error instanceof Error ? error.message : 'Products could not be posted.' });
+      logger.writePublishEvent('product.publish.failure', { draftId: request.params.draftId, error: error instanceof Error ? error.message : 'Products could not be posted.' });
       return next(error);
     }
   });
