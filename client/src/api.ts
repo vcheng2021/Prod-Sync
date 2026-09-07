@@ -80,7 +80,7 @@ const readError = async (response: Response): Promise<string> => {
 };
 
 const requestJson = async <T>(input: RequestInfo | URL, init?: RequestInit): Promise<T> => {
-  const response = await fetch(input, init);
+  const response = await fetch(input, { credentials: 'include', ...init });
   if (!response.ok) throw new Error(await readError(response));
   return response.json() as Promise<T>;
 };
@@ -149,3 +149,15 @@ export interface ReadinessStatus {
 
 export const getReadiness = (): Promise<ReadinessStatus> =>
   requestJson<ReadinessStatus>('/api/ready');
+
+export const registerUser = (username: string, password: string): Promise<{ ok: boolean; user: { id: string; username: string } }> =>
+  requestJson('/api/auth/register', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ username, password }) });
+
+export const loginUser = (username: string, password: string): Promise<{ ok: boolean; user: { id: string; username: string } }> =>
+  requestJson('/api/auth/login', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ username, password }) });
+
+export const logoutUser = (): Promise<{ ok: boolean }> =>
+  requestJson('/api/auth/logout', { method: 'POST' });
+
+export const getCurrentUser = (): Promise<{ authenticated: boolean; user?: { id: string; username: string; createdAt: string } }> =>
+  requestJson('/api/auth/me');

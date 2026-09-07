@@ -1,11 +1,14 @@
 import { Router } from 'express';
+import crypto from 'node:crypto';
 import fs from 'node:fs';
+import * as XLSX from 'xlsx';
 import path from 'node:path';
 import multer from 'multer';
 import { config } from '../config.js';
 import { DraftStore } from '../drafts/draftStore.js';
 import { downloadProductImage } from '../enrichment/imageDownloader.js';
 import { fetchProductDetails } from '../enrichment/sourcePageFetcher.js';
+import { transformToStandard } from '../imports/transformWorkbook.js';
 import { parseWorkbook } from '../imports/xlsxParser.js';
 import { AppLogger } from '../logging/logger.js';
 import type { ProductDraft } from '../types.js';
@@ -22,11 +25,17 @@ export const createImportRouter = (store: DraftStore, logger: AppLogger): Router
         return response.status(400).json({ error: 'Only .xlsx workbooks are supported.' });
       }
       const draftId = crypto.randomUUID();
-      const parsed = parseWorkbook(request.file.buffer, draftId);
+      const { headers, rows, supplier } = transformToStandard(request.file.buffer);
+      // Convert standard-format rows back to an xlsx buffer for xlsxParser
+      const ws = XLSX.utils.aoa_to_sheet([headers, ...rows.map((r) => r.values)]);
+      const wb = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(wb, ws, 'Sheet1');
+      const transformedBuffer = Buffer.from(XLSX.write(wb, { bookType: 'xlsx', type: 'buffer' }));
+      const parsed = parseWorkbook(transformedBuffer, draftId);
       if (parsed.products.length > config.maxImportRows) {
         return response.status(400).json({ error: `The workbook contains more than ${config.maxImportRows} product rows.` });
       }
-      const result = store.mergeWorkbook(request.file.originalname, parsed.products);
+      const result = store.mergeWorkbook(request.file.originalname, request.userId!, parsed.products);
       const importSummary = { ...result.summary, invalid: parsed.invalidRowCount, duplicateRowsSkipped: parsed.duplicateRowsSkipped };
       logger.write('workbook.merge', 'success', { filename: request.file.originalname, ...importSummary, importErrors: parsed.importErrors.length });
       return response.status(200).json({ ...result.draft, sheetName: parsed.sheetName, headers: parsed.headers, importErrors: parsed.importErrors, importSummary });
@@ -35,9 +44,9 @@ export const createImportRouter = (store: DraftStore, logger: AppLogger): Router
     }
   });
 
-  router.get('/api/drafts/current', (_request, response, next) => {
+  router.get('/api/drafts/current', (request, response, next) => {
     try {
-      return response.json(store.getCurrentDraft());
+      return response.json(store.getCurrentDraft(request.userId!));
     } catch (error) {
       logger.write('draft.restore', 'failure', { error: error instanceof Error ? error.message : 'Could not load the current catalog.' });
       return next(error);
@@ -56,7 +65,7 @@ export const createImportRouter = (store: DraftStore, logger: AppLogger): Router
 
   router.get('/api/drafts/:draftId', (request, response, next) => {
     try {
-      return response.json(store.getDraft(request.params.draftId));
+      return response.json(store.getDraft(request.params.draftId, request.userId!));
     } catch (error) {
       return next(error);
     }
@@ -64,7 +73,7 @@ export const createImportRouter = (store: DraftStore, logger: AppLogger): Router
 
   router.patch('/api/drafts/:draftId/products/:productId', (request, response, next) => {
     try {
-      return response.json(store.updateProduct(request.params.draftId, request.params.productId, request.body));
+      return response.json(store.updateProduct(request.params.draftId, request.userId!, request.params.productId, request.body));
     } catch (error) {
       return next(error);
     }
@@ -76,9 +85,9 @@ export const createImportRouter = (store: DraftStore, logger: AppLogger): Router
       if (!Array.isArray(updates) || updates.some((entry) => !entry || typeof entry.id !== 'string' || !entry.changes || typeof entry.changes !== 'object' || Array.isArray(entry.changes))) {
         return response.status(400).json({ error: 'Expected products with an id and changes object.' });
       }
-      const products = store.updateProducts(request.params.draftId, updates as Array<{ id: string; changes: Partial<ProductDraft> }>);
+      const products = store.updateProducts(request.params.draftId, request.userId!, updates as Array<{ id: string; changes: Partial<ProductDraft> }>);
       logger.write('product.save', 'success', { draftId: request.params.draftId, productCount: products.length, fieldCount: updates.reduce((total, entry) => total + Object.keys(entry.changes).length, 0) });
-      return response.json({ products, draft: store.getDraft(request.params.draftId) });
+      return response.json({ products, draft: store.getDraft(request.params.draftId, request.userId!) });
     } catch (error) {
       logger.write('product.save', 'failure', { draftId: request.params.draftId, error: error instanceof Error ? error.message : 'Could not save product changes.' });
       return next(error);
@@ -88,7 +97,7 @@ export const createImportRouter = (store: DraftStore, logger: AppLogger): Router
   router.post('/api/database/purge', (request, response, next) => {
     try {
       if (request.body?.confirmation !== 'PURGE') return response.status(400).json({ error: 'Type PURGE to confirm database deletion.' });
-      const result = store.purgeCatalog();
+      const result = store.purgeCatalog(request.userId!);
       const imageRoot = path.resolve(config.productImageDirectory);
       let removedImages = 0;
       for (const filename of result.imageFilenames) {
@@ -108,15 +117,15 @@ export const createImportRouter = (store: DraftStore, logger: AppLogger): Router
 
   router.post('/api/drafts/:draftId/products/:productId/retrieve', async (request, response, next) => {
     try {
-      const product = store.getDraft(request.params.draftId).products.find((entry) => entry.id === request.params.productId);
+      const product = store.getDraft(request.params.draftId, request.userId!).products.find((entry) => entry.id === request.params.productId);
       if (!product) return response.status(404).json({ error: 'Product not found.' });
       if (!product.selected) return response.status(400).json({ error: 'Check this product before retrieving source data.' });
       await Promise.all([
         product.sourceUrl ? (async () => {
-          const cached = store.getCachedEnrichment(product.sourceUrl);
+          const cached = store.getCachedEnrichment(request.userId!, product.sourceUrl);
           const result = cached ?? await fetchProductDetails(product.sourceUrl);
-          if (!cached) store.saveCachedEnrichment(product.sourceUrl, result);
-          store.saveEnrichment(request.params.draftId, product.id, {
+          if (!cached) store.saveCachedEnrichment(request.userId!, product.sourceUrl, result);
+          store.saveEnrichment(request.params.draftId, request.userId!, product.id, {
             status: result.status,
             details: result.details,
             error: result.error,
@@ -124,11 +133,11 @@ export const createImportRouter = (store: DraftStore, logger: AppLogger): Router
         })() : Promise.resolve(),
         product.imageUrl ? (async () => {
           const result = await downloadProductImage(product.imageUrl, product.id);
-          store.saveImageResult(request.params.draftId, product.id, result);
+          store.saveImageResult(request.params.draftId, request.userId!, product.id, result);
         })() : Promise.resolve(),
       ]);
       logger.write('product.retrieve', 'success', { draftId: request.params.draftId, productId: product.id });
-      return response.json(store.getDraft(request.params.draftId).products.find((entry) => entry.id === product.id));
+      return response.json(store.getDraft(request.params.draftId, request.userId!).products.find((entry) => entry.id === product.id));
     } catch (error) {
       logger.write('product.retrieve', 'failure', { draftId: request.params.draftId, productId: request.params.productId, error: error instanceof Error ? error.message : 'Source data could not be retrieved.' });
       return next(error);
@@ -137,15 +146,15 @@ export const createImportRouter = (store: DraftStore, logger: AppLogger): Router
 
   router.post('/api/drafts/:draftId/products/:productId/refresh', async (request, response, next) => {
     try {
-      const product = store.getDraft(request.params.draftId).products.find((entry) => entry.id === request.params.productId);
+      const product = store.getDraft(request.params.draftId, request.userId!).products.find((entry) => entry.id === request.params.productId);
       if (!product) return response.status(404).json({ error: 'Product not found.' });
       if (!product.selected) return response.status(400).json({ error: 'Check this product before refreshing source data.' });
       if (!product.sourceUrl) return response.status(400).json({ error: 'This product has no source URL.' });
       const result = await fetchProductDetails(product.sourceUrl);
-      store.saveCachedEnrichment(product.sourceUrl, result);
-      store.saveEnrichment(request.params.draftId, product.id, result);
+      store.saveCachedEnrichment(request.userId!, product.sourceUrl, result);
+      store.saveEnrichment(request.params.draftId, request.userId!, product.id, result);
       logger.write('product.refresh', 'success', { draftId: request.params.draftId, productId: product.id });
-      return response.json(store.getDraft(request.params.draftId).products.find((entry) => entry.id === product.id));
+      return response.json(store.getDraft(request.params.draftId, request.userId!).products.find((entry) => entry.id === product.id));
     } catch (error) {
       logger.write('product.refresh', 'failure', { draftId: request.params.draftId, productId: request.params.productId, error: error instanceof Error ? error.message : 'Source data could not be refreshed.' });
       return next(error);

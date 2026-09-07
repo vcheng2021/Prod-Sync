@@ -10,7 +10,7 @@ export const createPublishingRouter = (store: DraftStore, logger: AppLogger): Ro
 
   router.get('/api/drafts/:draftId/export', (request, response, next) => {
     try {
-      const draft = store.getDraft(request.params.draftId);
+      const draft = store.getDraft(request.params.draftId, request.userId!);
       const workbook = createDraftWorkbook(draft);
       const filename = `ecomint-${draft.draft.id}.xlsx`;
       response.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
@@ -32,8 +32,8 @@ export const createPublishingRouter = (store: DraftStore, logger: AppLogger): Ro
       if (globalCollectionIds !== undefined && (!Array.isArray(globalCollectionIds) || globalCollectionIds.some((entry) => typeof entry !== 'string'))) {
         return response.status(400).json({ error: 'Expected globalCollectionIds to be an array of strings.' });
       }
-      if (changes?.length) store.updateProducts(request.params.draftId, changes as Array<{ id: string; changes: Partial<ProductDraft> }>);
-      const draft = store.getDraft(request.params.draftId);
+      if (changes?.length) store.updateProducts(request.params.draftId, request.userId!, changes as Array<{ id: string; changes: Partial<ProductDraft> }>);
+      const draft = store.getDraft(request.params.draftId, request.userId!);
       const requestedIds = Array.isArray(request.body.productIds) ? new Set(request.body.productIds as string[]) : null;
       const products = draft.products.filter((product) => product.selected && (!requestedIds || requestedIds.has(product.id)));
       if (!products.length) return response.status(400).json({ error: 'Select at least one product to publish.' });
@@ -44,13 +44,13 @@ export const createPublishingRouter = (store: DraftStore, logger: AppLogger): Ro
           globalCollectionIds && globalCollectionIds.length
             ? { ...product, selectedCollectionIds: globalCollectionIds }
             : product;
-        store.savePublishResult(request.params.draftId, product.id, 'publishing', null, '');
+        store.savePublishResult(request.params.draftId, request.userId!, product.id, 'publishing', null, '');
         const result = await publishProduct(publishProductInput);
-        store.savePublishResult(request.params.draftId, product.id, result.status, result.shopifyProductId, result.error);
+        store.savePublishResult(request.params.draftId, request.userId!, product.id, result.status, result.shopifyProductId, result.error);
         logger.write('product.publish', result.status === 'published' ? 'success' : 'failure', { draftId: request.params.draftId, productId: product.id, status: result.status, action: result.action, matchCount: result.matchCount, error: result.error });
         results.push({ productId: product.id, ...result });
       }
-      return response.json({ results, draft: store.getDraft(request.params.draftId) });
+      return response.json({ results, draft: store.getDraft(request.params.draftId, request.userId!) });
     } catch (error) {
       logger.write('product.publish', 'failure', { draftId: request.params.draftId, error: error instanceof Error ? error.message : 'Products could not be posted.' });
       return next(error);

@@ -1,4 +1,5 @@
 import 'dotenv/config';
+import crypto from 'node:crypto';
 import path from 'node:path';
 
 const parseAllowlist = (value: string | undefined): string[] =>
@@ -55,6 +56,13 @@ export const config = {
   imageMaxRedirects: Number(process.env.IMAGE_MAX_REDIRECTS ?? 3),
   imageMaxBytes: Number(process.env.IMAGE_MAX_BYTES ?? 15 * 1024 * 1024),
   imageDownloadConcurrency: Number(process.env.IMAGE_DOWNLOAD_CONCURRENCY ?? 3),
+  authSecret: process.env.AUTH_SECRET ?? crypto.randomUUID(),
+  sessionTimeoutMs: Number(process.env.SESSION_TIMEOUT_MS ?? 1_800_000),
+  wooCommerceStoreUrl: process.env.WOOCOMMERCE_STORE_URL ?? '',
+  wooCommerceConsumerKey: process.env.WOOCOMMERCE_CONSUMER_KEY ?? '',
+  wooCommerceConsumerSecret: process.env.WOOCOMMERCE_CONSUMER_SECRET ?? '',
+  wooCommerceApiVersion: process.env.WOOCOMMERCE_API_VERSION ?? 'wc/v3',
+  wooCommerceEmail: process.env.WOOCOMMERCE_EMAIL ?? '',
 };
 
 export const shopifyConfigured = Boolean(config.shopifyAdminAccessToken);

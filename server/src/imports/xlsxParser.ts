@@ -1,5 +1,6 @@
 import * as XLSX from 'xlsx';
 import { randomUUID } from 'node:crypto';
+import { StandardCol } from './standardFormat.js';
 import type { ProductDraft } from '../types.js';
 
 export interface ParsedWorkbook {
@@ -64,37 +65,37 @@ export const parseWorkbook = (buffer: Buffer, draftId: string): ParsedWorkbook =
   const keyRows = new Map<string, Array<{ rowNumber: number; fingerprint: string }>>();
   rows.slice(1).forEach((row, rowIndex) => {
     const rowNumber = rowIndex + 2;
-    const key = textValue(valueAt(row, 1));
+    const key = textValue(valueAt(row, StandardCol.KEY));
     const normalizedKey = normalizeSupplierProductKey(key);
-    if (normalizedKey) keyRows.set(normalizedKey, [...(keyRows.get(normalizedKey) ?? []), { rowNumber, fingerprint: JSON.stringify([row[0], row[1], row[4], row[5], row[6], row[8], row[9], row[10]]) }]);
+    if (normalizedKey) keyRows.set(normalizedKey, [...(keyRows.get(normalizedKey) ?? []), { rowNumber, fingerprint: JSON.stringify([row[StandardCol.IMAGE_1], row[StandardCol.KEY], row[StandardCol.TITLE], row[StandardCol.SOURCE_URL], row[StandardCol.SOH], row[StandardCol.CASE_PRICE], row[StandardCol.UNIT_PRICE], row[StandardCol.SUPPLIER_TYPE]]) }]);
   });
 
   rows.slice(1).forEach((row, rowIndex) => {
     const rowNumber = rowIndex + 2;
-    const supplierProductKey = textValue(valueAt(row, 1));
+    const supplierProductKey = textValue(valueAt(row, StandardCol.KEY));
     const normalizedKey = normalizeSupplierProductKey(supplierProductKey);
-    const imageUrl = textValue(valueAt(row, 0));
-    const title = textValue(valueAt(row, 4));
-    const sourceUrl = textValue(valueAt(row, 5));
-    const stockOnHand = numericValue(valueAt(row, 6));
-    const supplierType = textValue(valueAt(row, 10));
-    const casePrice = numericValue(valueAt(row, 8));
-    const unitPriceText = textValue(valueAt(row, 9));
-    const unitPrice = numericValue(valueAt(row, 9));
+    const imageUrl = textValue(valueAt(row, StandardCol.IMAGE_1));
+    const title = textValue(valueAt(row, StandardCol.TITLE));
+    const sourceUrl = textValue(valueAt(row, StandardCol.SOURCE_URL));
+    const stockOnHand = numericValue(valueAt(row, StandardCol.SOH));
+    const supplierType = textValue(valueAt(row, StandardCol.SUPPLIER_TYPE));
+    const casePrice = numericValue(valueAt(row, StandardCol.CASE_PRICE));
+    const unitPriceText = textValue(valueAt(row, StandardCol.UNIT_PRICE));
+    const unitPrice = numericValue(valueAt(row, StandardCol.UNIT_PRICE));
     const validationErrors: string[] = [];
 
     const hasContent = row.some((value) => textValue(value) !== '');
     if (!hasContent) return;
-    if (!supplierProductKey) validationErrors.push('Supplier product key is missing (column B).');
+    if (!supplierProductKey) validationErrors.push('Supplier product key is missing (column J).');
     const duplicateEntries = keyRows.get(normalizedKey) ?? [];
     const duplicateRows = duplicateEntries.map((entry) => entry.rowNumber);
     const hasConflictingDuplicate = new Set(duplicateEntries.map((entry) => entry.fingerprint)).size > 1;
-    if (duplicateEntries.length > 1 && hasConflictingDuplicate) validationErrors.push(`Supplier product key conflicts with rows ${duplicateRows.filter((entry) => entry !== rowNumber).join(', ')} (column B).`);
-    if (!title) validationErrors.push('Title is missing (column E).');
-    if (unitPriceText && (unitPrice === null || unitPrice <= 0)) validationErrors.push('Unit price must be greater than zero (column J).');
-    if (sourceUrl && !isValidUrl(sourceUrl)) validationErrors.push('Product URL must be a valid HTTPS URL (column F).');
-    if (stockOnHand === null && textValue(valueAt(row, 6))) validationErrors.push('Stock on hand is not numeric (column G).');
-    if (casePrice === null && textValue(valueAt(row, 8))) validationErrors.push('Case price is not numeric (column I).');
+    if (duplicateEntries.length > 1 && hasConflictingDuplicate) validationErrors.push(`Supplier product key conflicts with rows ${duplicateRows.filter((entry) => entry !== rowNumber).join(', ')} (column J).`);
+    if (!title) validationErrors.push('Title is missing (column K).');
+    if (unitPriceText && (unitPrice === null || unitPrice <= 0)) validationErrors.push('Unit price must be greater than zero (column O).');
+    if (sourceUrl && !isValidUrl(sourceUrl)) validationErrors.push('Product URL must be a valid HTTPS URL (column L).');
+    if (stockOnHand === null && textValue(valueAt(row, StandardCol.SOH))) validationErrors.push('Stock on hand is not numeric (column M).');
+    if (casePrice === null && textValue(valueAt(row, StandardCol.CASE_PRICE))) validationErrors.push('Case price is not numeric (column N).');
     if (imageUrl && !isValidUrl(imageUrl)) validationErrors.push('Image URL must be a valid HTTPS URL (column A).');
 
     if (!supplierProductKey || (duplicateEntries.length > 1 && hasConflictingDuplicate)) {
@@ -114,6 +115,7 @@ export const parseWorkbook = (buffer: Buffer, draftId: string): ParsedWorkbook =
       rowNumber,
       supplierProductKey,
       imageUrl,
+      imageUrls: imageUrl ? [imageUrl] : [],
       imageLocalFilename: '',
       imageLocalUrl: '',
       imageStatus: imageUrl ? 'pending' : 'not-provided',
@@ -130,6 +132,7 @@ export const parseWorkbook = (buffer: Buffer, draftId: string): ParsedWorkbook =
       region: '',
       productType: '',
       supplierType,
+      sourcePlatform: '',
       abv: '',
       containerType: '',
       style: '',

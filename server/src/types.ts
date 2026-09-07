@@ -8,6 +8,7 @@ export interface ProductDraft {
   rowNumber: number;
   supplierProductKey: string;
   imageUrl: string;
+  imageUrls: string[];
   imageLocalFilename: string;
   imageLocalUrl: string;
   imageStatus: ImageStatus;
@@ -24,6 +25,7 @@ export interface ProductDraft {
   region: string;
   productType: string;
   supplierType: string;
+  sourcePlatform: string;
   abv: string;
   containerType: string;
   style: string;

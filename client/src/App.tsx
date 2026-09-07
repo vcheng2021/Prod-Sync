@@ -4,10 +4,14 @@ import {
   exportDraftUrl,
   getIssueLog,
   getCurrentDraft,
+  getCurrentUser,
   getReadiness,
   importWorkbook,
+  loginUser,
+  logoutUser,
   publishProducts,
   purgeDatabase,
+  registerUser,
   retrieveProduct,
   saveProducts,
   updateProduct,
@@ -408,6 +412,12 @@ function AppContent() {
   const [readiness, setReadiness] = useState<ReadinessStatus | null>(null)
   const [clearingChecked, setClearingChecked] = useState(false)
   const [globalCollectionIds, setGlobalCollectionIds] = useState<string[]>([])
+  const [isLoggedIn, setIsLoggedIn] = useState(false)
+  const [username, setUsername] = useState('')
+  const [password, setPassword] = useState('')
+  const [authError, setAuthError] = useState('')
+  const [authMode, setAuthMode] = useState<'login' | 'register'>('login')
+  const [authLoading, setAuthLoading] = useState(false)
 
   const activeProduct =
     draft?.products.find((product) => product.id === activeProductId) ??
@@ -421,6 +431,28 @@ function AppContent() {
   // ── Startup: load catalog + Shopify readiness ──
   useEffect(() => {
     let mounted = true
+    const checkSession = async () => {
+      try {
+        const result = await getCurrentUser()
+        if (mounted && result.authenticated && result.user) {
+          setIsLoggedIn(true)
+        } else if (mounted && !result.authenticated) {
+          // Auto-login on first run with default admin credentials
+          try {
+            const loginResult = await loginUser('admin', 'admin')
+            if (loginResult.ok) {
+              setIsLoggedIn(true)
+              showToast('info', 'Automatically logged in with default admin account.')
+            }
+          } catch {
+            setIsLoggedIn(false)
+          }
+        }
+      } catch {
+        setIsLoggedIn(false)
+      }
+    }
+    void checkSession()
     void getCurrentDraft()
       .then((currentDraft) => {
         if (!mounted) return
@@ -691,6 +723,42 @@ function AppContent() {
     showToast('info', 'Page reset. Choose a workbook to start fresh.')
   }
 
+  const handleLogout = async () => {
+    try {
+      await logoutUser()
+    } catch {
+      // Ignore logout errors
+    }
+    setIsLoggedIn(false)
+    setUsername('')
+    setPassword('')
+    setAuthError('')
+    clearTransientState()
+    showToast('info', 'Logged out successfully.')
+  }
+
+  const handleAuthSubmit = async () => {
+    setAuthLoading(true)
+    setAuthError('')
+    try {
+      if (authMode === 'login') {
+        const result = await loginUser(username, password)
+        if (result.ok) {
+          setIsLoggedIn(true)
+          showToast('success', `Welcome back, ${result.user.username}.`)
+        }
+      } else {
+        await registerUser(username, password)
+        showToast('success', 'Account created. Please log in.')
+        setAuthMode('login')
+      }
+    } catch (requestError) {
+      setAuthError(requestError instanceof Error ? requestError.message : 'Authentication failed.')
+    } finally {
+      setAuthLoading(false)
+    }
+  }
+
   const handlePurge = async () => {
     if (purgeConfirmation !== 'PURGE' || saving || publishing) return
     setBusy(true)
@@ -944,9 +1012,77 @@ function AppContent() {
     )
   }
 
-  if (!draft) {
-    return (
-      <main className="app-shell landing-shell">
+  return (
+    <>
+      {!isLoggedIn && (
+        <div className="modal-backdrop" role="presentation" style={{ position: 'fixed', inset: 0, zIndex: 1000 }}>
+          <section className="review-modal" role="dialog" aria-modal="true" aria-labelledby="auth-title" style={{ maxWidth: 400, margin: '10vh auto' }}>
+            <div className="eyebrow">{authMode === 'login' ? 'LOG IN' : 'CREATE ACCOUNT'}</div>
+            <h2 id="auth-title">{authMode === 'login' ? 'Welcome back' : 'Create your account'}</h2>
+            {authError && <div className="validation-box"><strong>Error</strong><span>{authError}</span></div>}
+            <label className="field">
+              <span>Username</span>
+              <input
+                value={username}
+                onChange={(event) => setUsername(event.target.value)}
+                placeholder="Enter username"
+                autoComplete="username"
+              />
+            </label>
+            <label className="field">
+              <span>Password</span>
+              <input
+                type="password"
+                value={password}
+                onChange={(event) => setPassword(event.target.value)}
+                placeholder="Enter password"
+                autoComplete="current-password"
+              />
+            </label>
+            <div className="modal-actions">
+              {authMode === 'login' ? (
+                <>
+                  <button
+                    type="button"
+                    className="button button-primary"
+                    disabled={authLoading || !username.trim() || !password.trim()}
+                    onClick={handleAuthSubmit}
+                  >
+                    {authLoading ? 'Signing in…' : 'Sign in'}
+                  </button>
+                  <button
+                    type="button"
+                    className="button button-quiet"
+                    onClick={() => { setAuthMode('register'); setAuthError('') }}
+                  >
+                    Need an account? Register
+                  </button>
+                </>
+              ) : (
+                <>
+                  <button
+                    type="button"
+                    className="button button-primary"
+                    disabled={authLoading || !username.trim() || !password.trim()}
+                    onClick={handleAuthSubmit}
+                  >
+                    {authLoading ? 'Creating…' : 'Create account'}
+                  </button>
+                  <button
+                    type="button"
+                    className="button button-quiet"
+                    onClick={() => { setAuthMode('login'); setAuthError('') }}
+                  >
+                    Already have an account? Sign in
+                  </button>
+                </>
+              )}
+            </div>
+          </section>
+        </div>
+      )}
+      {!draft ? (
+        <main className="app-shell landing-shell">
         <header className="brandbar">
           <div className="brandmark">
             <span className="brand-dot" /> CELLAR / DRIVE
@@ -954,6 +1090,16 @@ function AppContent() {
           <div className="header-actions">
             <ThemeToggle />
             <BackgroundSettings />
+            {isLoggedIn && (
+              <button type="button" className="button button-quiet" onClick={handleLogout}>
+                Logout
+              </button>
+            )}
+            {!isLoggedIn && (
+              <button type="button" className="button button-primary" onClick={() => setAuthMode('login')}>
+                Login
+              </button>
+            )}
             {readiness && (
               <span
                 className={`connection-pill ${readiness.shopifyConfigured ? 'connected' : 'disconnected'}`}
@@ -1033,11 +1179,8 @@ function AppContent() {
           </div>
         </section>
       </main>
-    )
-  }
-
-  return (
-    <main className="app-shell workspace-shell">
+      ) : (
+        <main className="app-shell workspace-shell">
       {/* ── Header ── */}
       <header className="brandbar">
         <div className="brandmark">
@@ -1116,6 +1259,13 @@ function AppContent() {
             }}
           >
             Purge database
+          </button>
+          <button
+            type="button"
+            className="button button-quiet"
+            onClick={handleLogout}
+          >
+            Logout
           </button>
         </div>
       </header>
@@ -1968,6 +2118,8 @@ function AppContent() {
         </div>
       )}
     </main>
+      )}
+    </>
   )
 }
 
