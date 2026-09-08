@@ -44,12 +44,12 @@ export const CELLAR_MAPPING: SupplierMapping = {
   priceReconstruction: 'direct',
 };
 
-/** AliExpress (Vican) — native layout: A(product URL), B-F(images), I/J(title), K/L/M(fragmented price) */
+/** AliExpress (Vican) — native layout: A(product URL), B-I(images), J(title), K/L/M(fragmented price) */
 export const ALIEXPRESS_MAPPING: SupplierMapping = {
-  imageColumns: [0, 1, 2, 3, 4, 5, -1, -1],
+  imageColumns: [1, 2, 3, 4, 5, 6, 7, 8],
   sourceColumn: null, // Will be set to "aliexpress" by transformation
   keyColumn: null, // Derived from URL item ID
-  titleColumn: null, // Will use columns I/J from native
+  titleColumn: null, // Will use column J from native
   sourceUrlColumn: null, // Will use column A from native
   sohColumn: null,
   casePriceColumn: null,

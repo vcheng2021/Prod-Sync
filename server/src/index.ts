@@ -7,6 +7,7 @@ import { config } from './config.js';
 import { DraftStore } from './drafts/draftStore.js';
 import { parseWorkbook } from './imports/xlsxParser.js';
 import { transformToStandard } from './imports/transformWorkbook.js';
+import { STANDARD_HEADERS } from './imports/standardFormat.js';
 import { AppLogger } from './logging/logger.js';
 import { createImportRouter } from './routes/imports.js';
 import { createPublishingRouter } from './routes/publishing.js';
@@ -32,7 +33,7 @@ try {
     if (fs.existsSync(config.defaultWorkbookPath)) {
       const user = authService.register('admin', 'admin');
       const { rows } = transformToStandard(fs.readFileSync(config.defaultWorkbookPath));
-      const seedHeaders = ['image-1', 'image-2', 'image-3', 'image-4', 'image-5', 'image-6', 'image-7', 'image-8', 'source', 'body-xxs', 'body-xs', 'body-xs href', 'heading-xs', 'heading-xs 2', 'heading-xs 3', 'Type'];
+      const seedHeaders = [...STANDARD_HEADERS];
       const ws = XLSX.utils.aoa_to_sheet([seedHeaders, ...rows.map((r) => r.values)]);
       const wb = XLSX.utils.book_new();
       XLSX.utils.book_append_sheet(wb, ws, 'Sheet1');
@@ -77,7 +78,22 @@ app.get('/api/ready', (_request, response) => {
   const missing: string[] = [];
   if (!config.shopifyAdminAccessToken) missing.push('SHOPIFY_ADMIN_ACCESS_TOKEN');
   if (!config.shopifyLocationId) missing.push('SHOPIFY_LOCATION_ID');
-  response.json({ ok: true, version: config.appVersion, shopifyConfigured: missing.length === 0, storeDomain: config.storeDomain, missing, collections: config.shopifyCollections });
+  const wooMissing: string[] = [];
+  if (!config.wooCommerceStoreUrl) wooMissing.push('WOOCOMMERCE_STORE_URL');
+  if (!config.wooCommerceConsumerKey) wooMissing.push('WOOCOMMERCE_CONSUMER_KEY');
+  if (!config.wooCommerceConsumerSecret) wooMissing.push('WOOCOMMERCE_CONSUMER_SECRET');
+  response.json({
+    ok: true,
+    version: config.appVersion,
+    shopifyConfigured: missing.length === 0,
+    storeDomain: config.storeDomain,
+    missing,
+    collections: config.shopifyCollections,
+    wooCategories: config.wooCategories,
+    wooConfigured: wooMissing.length === 0,
+    wooStoreUrl: config.wooCommerceStoreUrl,
+    wooMissing,
+  });
 });
 app.use('/api/auth', createAuthRouter(authService, logger));
 app.use(createImportRouter(store, logger));

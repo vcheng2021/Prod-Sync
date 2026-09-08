@@ -25,13 +25,16 @@ export const createImportRouter = (store: DraftStore, logger: AppLogger): Router
         return response.status(400).json({ error: 'Only .xlsx workbooks are supported.' });
       }
       const draftId = crypto.randomUUID();
-      const { headers, rows, supplier } = transformToStandard(request.file.buffer);
+      // VIC-18: Allow client-supplied supplier override to control column mapping during transformation
+      const supplierOverride = request.body.supplier as string | undefined;
+      const { headers, rows, supplier: detectedSupplier } = transformToStandard(request.file.buffer, supplierOverride);
+      const supplier = supplierOverride ?? detectedSupplier;
       // Convert standard-format rows back to an xlsx buffer for xlsxParser
       const ws = XLSX.utils.aoa_to_sheet([headers, ...rows.map((r) => r.values)]);
       const wb = XLSX.utils.book_new();
       XLSX.utils.book_append_sheet(wb, ws, 'Sheet1');
       const transformedBuffer = Buffer.from(XLSX.write(wb, { bookType: 'xlsx', type: 'buffer' }));
-      const parsed = parseWorkbook(transformedBuffer, draftId);
+      const parsed = parseWorkbook(transformedBuffer, draftId, supplier);
       if (parsed.invalidRowCount > 0) {
         logger.writeImportEvent('import.validation_errors', { filename: request.file.originalname, draftId, invalidRowCount: parsed.invalidRowCount, importErrors: parsed.importErrors });
       }
@@ -51,6 +54,10 @@ export const createImportRouter = (store: DraftStore, logger: AppLogger): Router
 
   router.get('/api/drafts/current', (request, response, next) => {
     try {
+      const supplier = typeof request.query.supplier === 'string' ? request.query.supplier : undefined;
+      if (supplier) {
+        return response.json(store.getCurrentDraftBySupplier(request.userId!, supplier));
+      }
       return response.json(store.getCurrentDraft(request.userId!));
     } catch (error) {
       logger.write('draft.restore', 'failure', { error: error instanceof Error ? error.message : 'Could not load the current catalog.' });
@@ -136,43 +143,57 @@ export const createImportRouter = (store: DraftStore, logger: AppLogger): Router
       const product = store.getDraft(request.params.draftId, request.userId!).products.find((entry) => entry.id === request.params.productId);
       if (!product) return response.status(404).json({ error: 'Product not found.' });
       if (!product.selected) return response.status(400).json({ error: 'Check this product before retrieving source data.' });
-      await Promise.all([
-        product.sourceUrl ? (async () => {
-          const cached = store.getCachedEnrichment(request.userId!, product.sourceUrl);
-          const result = cached ?? await fetchProductDetails(product.sourceUrl);
-          if (!cached) store.saveCachedEnrichment(request.userId!, product.sourceUrl, result as { details: typeof result.details; status: typeof result.status; error: string; partialDetails?: Partial<typeof result.details>; failedFields: string[] });
-          const enrichmentPartial = !!(result as { partialDetails?: unknown }).partialDetails;
-          const failedFields = (result as { failedFields?: string[] }).failedFields ?? [];
-          store.saveEnrichment(request.params.draftId, request.userId!, product.id, {
-            status: result.status,
-            details: result.details,
+      // VIC-20 Issue 7: Source page retrieval (enrichment) is separated from image
+      // download. Images are only fetched via the dedicated /images endpoint.
+      if (product.sourceUrl) {
+        const cached = store.getCachedEnrichment(request.userId!, product.sourceUrl);
+        const result = cached ?? await fetchProductDetails(product.sourceUrl, product.supplier);
+        if (!cached) store.saveCachedEnrichment(request.userId!, product.sourceUrl, result as { details: typeof result.details; status: typeof result.status; error: string; partialDetails?: Partial<typeof result.details>; failedFields: string[] });
+        const enrichmentPartial = !!(result as { partialDetails?: unknown }).partialDetails;
+        const failedFields = (result as { failedFields?: string[] }).failedFields ?? [];
+        store.saveEnrichment(request.params.draftId, request.userId!, product.id, {
+          status: result.status,
+          details: result.details,
+          error: result.error,
+          enrichmentPartial,
+          failedFields,
+        });
+        if (enrichmentPartial || failedFields.length > 0) {
+          logger.writeProductsLoad({
+            timestamp: new Date().toISOString(),
+            productId: product.id,
+            supplierProductKey: product.supplierProductKey,
+            title: product.title,
+            sourceUrl: product.sourceUrl,
+            fieldsLoaded: enrichmentPartial ? [] : [],
+            fieldsFailed: failedFields,
             error: result.error,
-            enrichmentPartial,
-            failedFields,
+            draftId: request.params.draftId,
           });
-          if (enrichmentPartial || failedFields.length > 0) {
-            logger.writeProductsLoad({
-              timestamp: new Date().toISOString(),
-              productId: product.id,
-              supplierProductKey: product.supplierProductKey,
-              title: product.title,
-              sourceUrl: product.sourceUrl,
-              fieldsLoaded: enrichmentPartial ? [] : [],
-              fieldsFailed: failedFields,
-              error: result.error,
-              draftId: request.params.draftId,
-            });
-          }
-        })() : Promise.resolve(),
-        product.imageUrl ? (async () => {
-          const result = await downloadProductImage(product.imageUrl, product.id);
-          store.saveImageResult(request.params.draftId, request.userId!, product.id, result);
-        })() : Promise.resolve(),
-      ]);
+        }
+      }
       logger.write('product.retrieve', 'success', { draftId: request.params.draftId, productId: product.id });
       return response.json(store.getDraft(request.params.draftId, request.userId!).products.find((entry) => entry.id === product.id));
     } catch (error) {
       logger.write('product.retrieve', 'failure', { draftId: request.params.draftId, productId: request.params.productId, error: error instanceof Error ? error.message : 'Source data could not be retrieved.' });
+      return next(error);
+    }
+  });
+
+  // VIC-20 Issue 7: Dedicated endpoint for downloading a product image, separate
+  // from source page retrieval. Images are only downloaded here — never during
+  // import or checkbox toggles — giving the user explicit control.
+  router.post('/api/drafts/:draftId/products/:productId/images', async (request, response, next) => {
+    try {
+      const product = store.getDraft(request.params.draftId, request.userId!).products.find((entry) => entry.id === request.params.productId);
+      if (!product) return response.status(404).json({ error: 'Product not found.' });
+      if (!product.imageUrl) return response.status(400).json({ error: 'This product has no image URL.' });
+      const result = await downloadProductImage(product.imageUrl, product.id);
+      store.saveImageResult(request.params.draftId, request.userId!, product.id, result);
+      logger.write('product.image', result.status === 'valid' ? 'success' : 'failure', { draftId: request.params.draftId, productId: product.id, status: result.status, error: result.error });
+      return response.json(store.getDraft(request.params.draftId, request.userId!).products.find((entry) => entry.id === product.id));
+    } catch (error) {
+      logger.write('product.image', 'failure', { draftId: request.params.draftId, productId: request.params.productId, error: error instanceof Error ? error.message : 'Image could not be downloaded.' });
       return next(error);
     }
   });
@@ -183,7 +204,7 @@ export const createImportRouter = (store: DraftStore, logger: AppLogger): Router
       if (!product) return response.status(404).json({ error: 'Product not found.' });
       if (!product.selected) return response.status(400).json({ error: 'Check this product before refreshing source data.' });
       if (!product.sourceUrl) return response.status(400).json({ error: 'This product has no source URL.' });
-      const result = await fetchProductDetails(product.sourceUrl);
+      const result = await fetchProductDetails(product.sourceUrl, product.supplier);
       store.saveCachedEnrichment(request.userId!, product.sourceUrl, result);
       store.saveEnrichment(request.params.draftId, request.userId!, product.id, result);
       logger.write('product.refresh', 'success', { draftId: request.params.draftId, productId: product.id });

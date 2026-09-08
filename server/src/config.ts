@@ -44,6 +44,7 @@ export const config = {
   shopifyLocationId: process.env.SHOPIFY_LOCATION_ID ?? '',
   shopifyFeaturedCollectionId: process.env.SHOPIFY_FEATURED_COLLECTION_ID ?? '',
   shopifyCollections: parseShopifyCollections(process.env.SHOPIFY_COLLECTION_ID),
+  wooCategories: parseShopifyCollections(process.env.WOOCOMMERCE_PRODUCT_CATEGORIES),
   maxImportRows: Number(process.env.MAX_IMPORT_ROWS ?? 10000),
   defaultWorkbookPath: path.resolve(process.cwd(), 'suppliers', 'sup2_paramountliquor.xlsx'),
   sourceRequestTimeoutMs: Number(process.env.SOURCE_REQUEST_TIMEOUT_MS ?? 12_000),

@@ -63,6 +63,8 @@ export class DraftStore {
         aliexpress_images TEXT NOT NULL DEFAULT '[]',
         original_product_attributes TEXT NOT NULL DEFAULT '',
         original_product_description TEXT NOT NULL DEFAULT '',
+        selected_image_index INTEGER NOT NULL DEFAULT 0,
+        cost_price REAL,
         selected INTEGER NOT NULL,
         publish_status TEXT NOT NULL,
         publish_error TEXT NOT NULL,
@@ -145,6 +147,8 @@ export class DraftStore {
     this.addColumnIfMissing('products', 'aliexpress_images', "TEXT NOT NULL DEFAULT '[]'");
     this.addColumnIfMissing('products', 'original_product_attributes', "TEXT NOT NULL DEFAULT ''");
     this.addColumnIfMissing('products', 'original_product_description', "TEXT NOT NULL DEFAULT ''");
+    this.addColumnIfMissing('products', 'selected_image_index', 'INTEGER NOT NULL DEFAULT 0');
+    this.addColumnIfMissing('products', 'cost_price', 'REAL');
     this.addColumnIfMissing('source_cache', 'parser_version', "TEXT NOT NULL DEFAULT '1'");
     this.addColumnIfMissing('source_cache', 'user_id', "TEXT");
     this.addColumnIfMissing('publish_events', 'user_id', "TEXT");
@@ -237,13 +241,13 @@ export class DraftStore {
       id, draft_id, user_id, row_number, supplier_product_key, supplier_product_key_normalized, image_url, image_urls, image_status, title, source_url, stock_on_hand, case_price, unit_price, suggested_sale_price, inventory_quantity, sale_price_overridden,
       description_html, brand, country, region, product_type, supplier_type, source_platform, abv, container_type, style, enrichment_status,
       enrichment_error, enrichment_fetched_at, enrichment_partial, failed_enrichment_fields, selected, publish_status, publish_error, shopify_product_id,
-      shopify_match_count, is_featured, publish_to_online_store, collection_ids, validation_errors, raw_json
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`);
+      shopify_match_count, is_featured, publish_to_online_store, collection_ids, aliexpress_images, selected_image_index, cost_price, validation_errors, raw_json, supplier
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`);
     const findProduct = this.database.prepare('SELECT * FROM products WHERE draft_id = ? AND supplier_product_key_normalized = ? AND user_id = ?') as Database.Statement;
     const updateProduct = this.database.prepare(`UPDATE products SET
       row_number = ?, supplier_product_key = ?, image_url = ?, image_urls = ?, image_local_filename = ?, image_local_url = ?, image_status = ?, title = ?, source_url = ?, stock_on_hand = ?, case_price = ?, unit_price = ?, suggested_sale_price = ?,
       description_html = ?, brand = ?, country = ?, region = ?, product_type = ?, supplier_type = ?, source_platform = ?, abv = ?, container_type = ?, style = ?, enrichment_status = ?, enrichment_error = ?, enrichment_fetched_at = ?,
-      validation_errors = ?, raw_json = ? WHERE id = ? AND draft_id = ? AND user_id = ?`);
+      aliexpress_images = ?, validation_errors = ?, raw_json = ?, supplier = ? WHERE id = ? AND draft_id = ? AND user_id = ?`);
     const transaction = this.database.transaction(() => {
       if (!currentDraft) insertDraft.run(draftId, filename, now, now, userId);
       else this.database.prepare('UPDATE drafts SET filename = ?, updated_at = ? WHERE id = ? AND user_id = ?').run(filename, now, draftId, userId);
@@ -258,7 +262,7 @@ export class DraftStore {
             product.stockOnHand, product.casePrice, product.unitPrice, product.suggestedSalePrice, product.inventoryQuantity, 0, product.descriptionHtml, product.brand, product.country,
             product.region, product.productType, product.supplierType, product.sourcePlatform ?? '', product.abv, product.containerType, product.style, product.enrichmentStatus,
             product.enrichmentError, product.enrichmentFetchedAt, product.enrichmentPartial ? 1 : 0, JSON.stringify(product.failedEnrichmentFields ?? []), product.selected ? 1 : 0, product.publishStatus, product.publishError,
-            product.shopifyProductId, product.shopifyMatchCount, product.featured ? 1 : 0, product.publishToOnlineStore ? 1 : 0, JSON.stringify(product.selectedCollectionIds ?? []), JSON.stringify(product.validationErrors), JSON.stringify(product.raw),
+            product.shopifyProductId, product.shopifyMatchCount, product.featured ? 1 : 0, product.publishToOnlineStore ? 1 : 0, JSON.stringify(product.selectedCollectionIds ?? []), JSON.stringify(product.aliexpressImages ?? []), product.selectedImageIndex, product.costPrice, JSON.stringify(product.validationErrors), JSON.stringify(product.raw), product.supplier,
           );
           summary.added += 1; continue;
         }
@@ -273,7 +277,7 @@ export class DraftStore {
           product.stockOnHand, product.casePrice, product.unitPrice, suggestedSalePrice, sourceChanged ? existing.description_html : existing.description_html,
           existing.brand, existing.country, existing.region, existing.product_type, product.supplierType, existing.source_platform ?? '', existing.abv, existing.container_type, existing.style,
           sourceChanged ? (product.sourceUrl ? 'pending' : 'not-provided') : existing.enrichment_status, sourceChanged ? '' : existing.enrichment_error,
-          sourceChanged ? null : existing.enrichment_fetched_at, JSON.stringify(product.validationErrors), JSON.stringify(product.raw), existing.id, draftId, userId,
+          sourceChanged ? null : existing.enrichment_fetched_at, JSON.stringify(product.aliexpressImages ?? []), JSON.stringify(product.validationErrors), JSON.stringify(product.raw), product.supplier, existing.id, draftId, userId,
         );
         summary[unchanged ? 'unchanged' : 'updated'] += 1;
       }
@@ -291,6 +295,19 @@ export class DraftStore {
   getCurrentDraft(userId: string): DraftResponse | null {
     const draft = this.getCurrentDraftRow(userId);
     return draft ? this.getDraft(draft.id, userId) : null;
+  }
+
+  // VIC-22: Get the most recently updated draft that has at least one product
+  // matching the given supplier. Returns null if no matching draft exists.
+  getCurrentDraftBySupplier(userId: string, supplier: string): DraftResponse | null {
+    const row = this.database.prepare(
+      `SELECT d.* FROM drafts d
+       JOIN products p ON p.draft_id = d.id
+       WHERE d.user_id = ? AND p.supplier = ?
+       ORDER BY d.updated_at DESC, d.created_at DESC
+       LIMIT 1`
+    ).get(userId, supplier) as DraftRow | undefined;
+    return row ? this.getDraft(row.id, userId) : null;
   }
 
   hasProducts(userId: string): boolean {
@@ -344,7 +361,12 @@ export class DraftStore {
       imageUrl: 'image_url', imageUrls: 'image_urls', title: 'title', stockOnHand: 'stock_on_hand', casePrice: 'case_price', unitPrice: 'unit_price',
       suggestedSalePrice: 'suggested_sale_price', inventoryQuantity: 'inventory_quantity', descriptionHtml: 'description_html', brand: 'brand', country: 'country', region: 'region', productType: 'product_type',
       abv: 'abv', containerType: 'container_type', style: 'style', selected: 'selected', featured: 'is_featured', publishToOnlineStore: 'publish_to_online_store', selectedCollectionIds: 'collection_ids',
-      sourcePlatform: 'source_platform',
+      selectedImageIndex: 'selected_image_index', costPrice: 'cost_price', sourcePlatform: 'source_platform',
+      // VIC-17: AliExpress-specific editable fields
+      productAttributes: 'product_attributes', productDescription: 'product_description',
+      aliexpressImages: 'aliexpress_images',
+      // VIC-18: Supplier routing
+      supplier: 'supplier',
     };
     const transaction = this.database.transaction(() => {
       const now = new Date().toISOString();
@@ -356,7 +378,7 @@ export class DraftStore {
         if (!existing) throw new Error(`Product ${update.id} was not found in this catalog.`);
         if (!keys.length) continue;
         const assignments = keys.map((key) => `${columns[key]} = ?`);
-        const values = keys.map((key) => (key === 'selected' || key === 'featured' || key === 'publishToOnlineStore') ? (changes[key] ? 1 : 0) : key === 'selectedCollectionIds' ? JSON.stringify(changes[key] ?? []) : changes[key]);
+        const values = keys.map((key) => (key === 'selected' || key === 'featured' || key === 'publishToOnlineStore') ? (changes[key] ? 1 : 0) : (key === 'selectedCollectionIds' || key === 'aliexpressImages') ? JSON.stringify(changes[key] ?? []) : changes[key]);
         if (keys.includes('suggestedSalePrice')) assignments.push('sale_price_overridden = 1');
         values.push(update.id, draftId, userId);
         this.database.prepare(`UPDATE products SET ${assignments.join(', ')} WHERE id = ? AND draft_id = ? AND user_id = ?`).run(...values);
@@ -372,8 +394,66 @@ export class DraftStore {
 
   saveEnrichment(draftId: string, userId: string, productId: string, result: { status: ProductDraft['enrichmentStatus']; details: EnrichedProductDetails; error: string; enrichmentPartial?: boolean; failedFields?: string[] }): void {
     const now = new Date().toISOString();
-    this.database.prepare(`UPDATE products SET description_html = ?, brand = ?, country = ?, region = ?, product_type = ?, abv = ?, container_type = ?, style = ?, enrichment_status = ?, enrichment_error = ?, enrichment_fetched_at = ?, enrichment_partial = ?, failed_enrichment_fields = ? WHERE id = ? AND draft_id = ? AND user_id = ?`)
-      .run(result.details.descriptionHtml, result.details.brand, result.details.country, result.details.region, result.details.productType, result.details.abv, result.details.containerType, result.details.style, result.status, result.error, now, result.enrichmentPartial ? 1 : 0, JSON.stringify(result.failedFields ?? []), productId, draftId, userId);
+
+    // Determine the original values for AliExpress fields (to keep for reset)
+    const existingProduct = this.database.prepare('SELECT product_attributes, product_description, aliexpress_images, original_product_attributes, original_product_description, selected_image_index FROM products WHERE id = ? AND draft_id = ? AND user_id = ?').get(productId, draftId, userId) as {
+      product_attributes: string;
+      product_description: string;
+      aliexpress_images: string;
+      original_product_attributes: string;
+      original_product_description: string;
+      selected_image_index: number | null;
+    } | undefined;
+
+    // Set original values if not already set (first retrieval)
+    const originalAttributes = existingProduct?.original_product_attributes || result.details.productAttributes || '';
+    const originalDescription = existingProduct?.original_product_description || result.details.productDescription || '';
+
+    this.database.prepare(`UPDATE products SET
+      description_html = ?,
+      brand = ?,
+      country = ?,
+      region = ?,
+      product_type = ?,
+      abv = ?,
+      container_type = ?,
+      style = ?,
+      enrichment_status = ?,
+      enrichment_error = ?,
+      enrichment_fetched_at = ?,
+      enrichment_partial = ?,
+      failed_enrichment_fields = ?,
+      product_attributes = ?,
+      product_description = ?,
+      aliexpress_images = ?,
+      original_product_attributes = ?,
+      original_product_description = ?,
+      selected_image_index = ?
+     WHERE id = ? AND draft_id = ? AND user_id = ?`)
+      .run(
+        result.details.descriptionHtml,
+        result.details.brand,
+        result.details.country,
+        result.details.region,
+        result.details.productType,
+        result.details.abv,
+        result.details.containerType,
+        result.details.style,
+        result.status,
+        result.error,
+        now,
+        result.enrichmentPartial ? 1 : 0,
+        JSON.stringify(result.failedFields ?? []),
+        result.details.productAttributes || existingProduct?.product_attributes || '',
+        result.details.productDescription || existingProduct?.product_description || '',
+        JSON.stringify(result.details.aliexpressImages ?? []),
+        originalAttributes,
+        originalDescription,
+        result.details.aliexpressImages ? 0 : (existingProduct?.selected_image_index ?? 0),
+        productId,
+        draftId,
+        userId
+      );
     this.database.prepare('UPDATE drafts SET updated_at = ? WHERE id = ? AND user_id = ?').run(now, draftId, userId);
   }
 
@@ -471,6 +551,7 @@ export class DraftStore {
       enrichmentPartial: Boolean(row.enrichment_partial), failedEnrichmentFields: JSON.parse(row.failed_enrichment_fields || '[]'),
       supplier: row.supplier, productAttributes: row.product_attributes, productDescription: row.product_description,
       aliexpressImages: JSON.parse(row.aliexpress_images || '[]'), originalProductAttributes: row.original_product_attributes, originalProductDescription: row.original_product_description,
+      selectedImageIndex: row.selected_image_index, costPrice: row.cost_price,
     };
   }
 }
@@ -481,6 +562,7 @@ type ProductRow = {
   stock_on_hand: number | null; case_price: number | null; unit_price: number | null; suggested_sale_price: number | null; inventory_quantity: number; sale_price_overridden: number; description_html: string; brand: string;
   country: string; region: string; product_type: string; supplier_type: string; source_platform: string; abv: string; container_type: string; style: string; enrichment_status: string;
   enrichment_error: string; enrichment_fetched_at: string | null; enrichment_partial: number; failed_enrichment_fields: string; supplier: string; product_attributes: string; product_description: string; aliexpress_images: string; original_product_attributes: string; original_product_description: string;
+  selected_image_index: number; cost_price: number | null;
   selected: number; publish_status: string; publish_error: string;
   shopify_product_id: string | null; shopify_match_count: number | null; is_featured: number; publish_to_online_store: number; collection_ids: string; validation_errors: string; raw_json: string;
 };

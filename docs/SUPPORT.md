@@ -171,6 +171,8 @@ In the product detail editor, supplier-owned fields — Product Title, Unit Pric
 
 **Reset page** clears the visible draft, filters, selections, messages, modal state, issue records, and unsaved browser edits. It does not delete SQLite data. A later browser reload restores the persisted catalog. Use **Purge database** when the local catalog itself must be removed. To load a new or updated workbook into the existing catalog without resetting, use the **Load workbook** button in the toolbar instead.
 
+**Switching suppliers** (Cellar Drive ↔ Vican Visions) using the supplier dropdown in the brand bar and the Apply button triggers a supplier-aware draft restoration: the application queries `GET /api/drafts/current?supplier=<supplier>` to find the most recently updated draft matching the new supplier. If a saved draft exists for that supplier, it is restored immediately. If no matching draft exists, the visible workspace is cleared and the upload/landing page is shown.
+
 ## 9. Source retrieval and publishing
 
 Checking a row does not contact the supplier. Pressing Retrieve source data on a checked row fetches the permitted supplier page and image, then stores the result. Failed retrievals show a retry action.

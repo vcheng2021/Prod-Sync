@@ -45,6 +45,8 @@ export interface ProductDraft {
   aliexpressImages: string[];
   originalProductAttributes: string;
   originalProductDescription: string;
+  selectedImageIndex: number;
+  costPrice: number | null;
   // VIC-18: Supplier routing
   supplier: string;
   // UI state

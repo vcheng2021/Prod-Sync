@@ -1,22 +1,26 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import type { ChangeEvent } from 'react'
 import {
   exportDraftUrl,
   getIssueLog,
   getCurrentDraft,
+  getCurrentDraftBySupplier,
   getCurrentUser,
   getReadiness,
+  getProductsLoad,
   importWorkbook,
   loginUser,
   logoutUser,
   publishProducts,
   purgeDatabase,
   registerUser,
+  downloadProductImage,
   retrieveProduct,
   saveProducts,
   updateProduct,
   type DraftResponse,
   type LogIssue,
+  type ProductsLoadEntry,
   type ProductDraft,
   type ReadinessStatus,
 } from './api'
@@ -48,11 +52,11 @@ const filterFieldConfig: FilterFieldConfig[] = [
   { field: 'suggestedSalePrice', label: 'Sale price', kind: 'range' },
   { field: 'casePrice', label: 'Case price', kind: 'range' },
   { field: 'stockOnHand', label: 'Stock', kind: 'range' },
-  { field: 'inventoryQuantity', label: 'Shopify inventory', kind: 'range' },
+  { field: 'inventoryQuantity', label: 'Inventory', kind: 'range' },
   { field: 'supplierType', label: 'Type', kind: 'select' },
   { field: 'imageStatus', label: 'Image', kind: 'select' },
   { field: 'enrichmentStatus', label: 'Source', kind: 'select' },
-  { field: 'publishStatus', label: 'Shopify', kind: 'select' },
+  { field: 'publishStatus', label: 'Status', kind: 'select' },
   { field: 'description', label: 'Description', kind: 'text' },
 ]
 
@@ -396,6 +400,8 @@ function AppContent() {
   const [columnFilters, setColumnFilters] = useState<Partial<Record<FilterField, ColumnFilterValue>>>({})
   const [page, setPage] = useState(1)
   const [activeProductId, setActiveProductId] = useState<string | null>(null)
+  const [browsingProductId, setBrowsingProductId] = useState<string | null>(null)
+  const browserWindowRef = useRef<Window | null>(null)
   const [busy, setBusy] = useState(false)
   const [publishing, setPublishing] = useState(false)
   const [saving, setSaving] = useState(false)
@@ -406,18 +412,27 @@ function AppContent() {
   const [reviewOpen, setReviewOpen] = useState(false)
   const [confirmPost, setConfirmPost] = useState(false)
   const [retrievingProductId, setRetrievingProductId] = useState<string | null>(null)
+  // VIC-20 Issue 7: Image download state used by the explicit Download image
+  // button for retries (images are also auto-downloaded during Retrieve source data).
+  const [downloadingImageId, setDownloadingImageId] = useState<string | null>(null)
   const [issuesOpen, setIssuesOpen] = useState(false)
   const [issuesLoading, setIssuesLoading] = useState(false)
   const [logIssues, setLogIssues] = useState<LogIssue[]>([])
+  const [productsLoadOpen, setProductsLoadOpen] = useState(false)
+  const [productsLoadLoading, setProductsLoadLoading] = useState(false)
+  const [productsLoadEntries, setProductsLoadEntries] = useState<ProductsLoadEntry[]>([])
   const [readiness, setReadiness] = useState<ReadinessStatus | null>(null)
   const [clearingChecked, setClearingChecked] = useState(false)
   const [globalCollectionIds, setGlobalCollectionIds] = useState<string[]>([])
+  const [globalCategoryIds, setGlobalCategoryIds] = useState<string[]>([])
   const [isLoggedIn, setIsLoggedIn] = useState(false)
   const [username, setUsername] = useState('')
   const [password, setPassword] = useState('')
   const [authError, setAuthError] = useState('')
   const [authMode, setAuthMode] = useState<'login' | 'register'>('login')
   const [authLoading, setAuthLoading] = useState(false)
+  const [supplier, setSupplier] = useState<'cellar' | 'vican'>('cellar')
+  const [pendingSupplier, setPendingSupplier] = useState<'cellar' | 'vican' | null>(null)
 
   const activeProduct =
     draft?.products.find((product) => product.id === activeProductId) ??
@@ -497,10 +512,15 @@ function AppContent() {
   }, [hasUnsavedChanges])
 
   // ── Derived: filter options, filtered products, metrics ──
+  // VIC-20 Issue 5: Case price filter is not applicable for vican (no case pricing)
+  const activeFilterConfig = useMemo(
+    () => filterFieldConfig.filter((config) => supplier !== 'vican' || config.field !== 'casePrice'),
+    [supplier],
+  )
   const filterOptions = useMemo(() => {
     const products = draft?.products ?? []
     return Object.fromEntries(
-      filterFieldConfig
+      activeFilterConfig
         .filter(({ kind }) => kind === 'select')
         .map(({ field }) => [
           field,
@@ -509,11 +529,13 @@ function AppContent() {
           ).sort((left, right) => left.localeCompare(right)),
         ]),
     ) as Partial<Record<FilterField, string[]>>
-  }, [draft?.products])
+  }, [draft?.products, activeFilterConfig])
 
   const filteredProducts = useMemo(() => {
     const needle = query.trim().toLocaleLowerCase()
     const filtered = (draft?.products ?? []).filter((product) => {
+      // VIC-18: Only show products matching the active supplier
+      if (product.supplier && product.supplier !== supplier) return false
       const matchesQuery =
         !needle ||
         product.title.toLocaleLowerCase().includes(needle) ||
@@ -528,7 +550,7 @@ function AppContent() {
           (product.enrichmentStatus === 'failed' ||
             product.publishStatus === 'failed')) ||
         (statusFilter === 'published' && product.publishStatus === 'published')
-      const matchesColumns = filterFieldConfig.every(({ field, kind }) => {
+      const matchesColumns = activeFilterConfig.every(({ field, kind }) => {
         const filter = columnFilters[field]
         if (!filter) return true
         if (kind === 'select') {
@@ -564,11 +586,28 @@ function AppContent() {
     return filtered
   }, [columnFilters, draft?.products, query, statusFilter, sortOption])
 
+  // VIC-18: When the supplier filter changes, reset the active product to the
+  // first matching item so both the list and detail panel reflect the selected supplier.
+  // Only reset when the active product is no longer in the filtered list, so that
+  // routine draft updates (e.g. after Retrieve) don't cause the detail pane to
+  // jump back to the first product.
+  useEffect(() => {
+    if (!draft) return
+    const firstId = filteredProducts[0]?.id
+    const activeStillVisible = filteredProducts.some((p) => p.id === activeProductId)
+    if (firstId && (!activeProductId || !activeStillVisible)) {
+      setActiveProductId(firstId)
+      setPage(1)
+    }
+  }, [supplier, draft, filteredProducts])
+
   const pageCount = Math.max(1, Math.ceil(filteredProducts.length / PAGE_SIZE))
   const visibleProducts = filteredProducts.slice(
     (page - 1) * PAGE_SIZE,
     page * PAGE_SIZE,
   )
+  const browsingProduct = visibleProducts.find((p) => p.id === browsingProductId) ?? null
+
   const selectedProducts = draft?.products.filter((product) => product.selected) ?? []
   const validSelectedProducts = selectedProducts.filter(
     (product) =>
@@ -674,7 +713,7 @@ function AppContent() {
     setBusy(true)
     showToast('info', 'Reading workbook. Source data will be retrieved only when you request it for a checked row.')
     try {
-      const result = await importWorkbook(file)
+      const result = await importWorkbook(file, supplier)
       setDraft(result)
       setDirtyFields({})
       setImportErrors(result.importErrors)
@@ -686,6 +725,9 @@ function AppContent() {
       setPage(1)
       setReviewOpen(false)
       setConfirmPost(false)
+      setRetrievingProductId(null)
+      setDownloadingImageId(null)
+      setGlobalCategoryIds([])
       showToast(
         'success',
         `${result.products.length.toLocaleString()} products merged from ${result.sheetName}: ${result.importSummary.added} added, ${result.importSummary.updated} updated, ${result.importSummary.unchanged} unchanged, ${result.importSummary.duplicateRowsSkipped} exact duplicates skipped.`,
@@ -710,11 +752,39 @@ function AppContent() {
     setReviewOpen(false)
     setConfirmPost(false)
     setRetrievingProductId(null)
+    setDownloadingImageId(null)
     setIssuesOpen(false)
     setLogIssues([])
     setPurgeOpen(false)
     setPurgeConfirmation('')
     setGlobalCollectionIds([])
+    setGlobalCategoryIds([])
+  }
+
+  // VIC-22: When switching suppliers, try to restore a saved draft for the
+  // new supplier from SQLite. Only clear to the upload page if no matching
+  // draft exists.
+  const handleSupplierSwitch = async (newSupplier: 'cellar' | 'vican') => {
+    setSupplier(newSupplier)
+    setPendingSupplier(null)
+    setGlobalCategoryIds([])
+    setGlobalCollectionIds([])
+    try {
+      const currentDraft = await getCurrentDraftBySupplier(newSupplier)
+      if (currentDraft) {
+        setDraft(currentDraft)
+        setActiveProductId(currentDraft.products[0]?.id ?? null)
+        setDirtyFields({})
+        setImportErrors([])
+        showToast('info', `${currentDraft.products.length.toLocaleString()} products restored from SQLite.`)
+      } else {
+        clearTransientState()
+        showToast('info', `Switched to ${newSupplier === 'vican' ? 'Vican Visions' : 'Cellar Drive'}`)
+      }
+    } catch {
+      clearTransientState()
+      showToast('info', `Switched to ${newSupplier === 'vican' ? 'Vican Visions' : 'Cellar Drive'}`)
+    }
   }
 
   const handleResetPage = () => {
@@ -784,23 +854,31 @@ function AppContent() {
     const selected = draft.products.filter((product) => product.selected)
     for (const product of selected) patchProduct(product.id, { selected: false })
     setGlobalCollectionIds([])
+    setGlobalCategoryIds([])
     setClearingChecked(false)
   }
 
   const handleRetrieve = async (product: ProductDraft) => {
-    if (!draft || !product.selected || (!product.sourceUrl && !product.imageUrl)) return
+    if (!draft || !product.selected || !product.sourceUrl) return
     setActiveProductId(product.id)
     setRetrievingProductId(product.id)
     setBusy(true)
     try {
       const retrievedProduct = await retrieveProduct(draft.draft.id, product.id)
       replaceProduct(retrievedProduct)
-      const retrievedParts = [
-        retrievedProduct.imageStatus === 'valid' ? 'image' : '',
-        retrievedProduct.enrichmentStatus === 'ready' ? 'source details' : '',
-      ].filter(Boolean)
-      if (retrievedParts.length > 0)
-        showToast('success', `${retrievedParts.join(' and ')} retrieved for ${product.title || 'the selected product'}.`)
+      // Retrieve source content also downloads the main product image
+      // so the detail pane is immediately populated with both content and image.
+      // The explicit Download image button remains for retrying image-only fetches.
+      if (retrievedProduct.imageUrl && retrievedProduct.imageStatus !== 'valid') {
+        try {
+          const imageResult = await downloadProductImage(draft.draft.id, product.id)
+          replaceProduct(imageResult)
+        } catch {
+          // Image download failure is non-fatal — source content was still retrieved
+        }
+      }
+      if (retrievedProduct.enrichmentStatus === 'ready')
+        showToast('success', `Source details retrieved for ${product.title || 'the selected product'}.`)
       else
         showToast(
           'info',
@@ -814,21 +892,49 @@ function AppContent() {
     }
   }
 
+  // VIC-20 Issue 7: Explicit image download action for retries.
+  // Images are also auto-downloaded during Retrieve source data.
+  const handleDownloadImage = async (product: ProductDraft) => {
+    if (!draft || !product.imageUrl) return
+    setDownloadingImageId(product.id)
+    try {
+      const result = await downloadProductImage(draft.draft.id, product.id)
+      replaceProduct(result)
+      if (result.imageStatus === 'valid')
+        showToast('success', `Image downloaded for ${product.title || 'the selected product'}.`)
+      else if (result.imageStatus === 'blocked')
+        showToast('error', `Image blocked: ${result.imageStatus === 'blocked' ? 'URL not allowed' : ''}`)
+      else
+        showToast('error', 'Image could not be downloaded. Check the source URL.')
+    } catch (requestError) {
+      showToast('error', requestError instanceof Error ? requestError.message : 'Image could not be downloaded.')
+    } finally {
+      setDownloadingImageId(null)
+    }
+  }
+
   const handleBulkRetrieve = async () => {
     if (!draft || busy) return
-    const toRetrieve = selectedProducts.filter((product) => product.sourceUrl || product.imageUrl)
+    const toRetrieve = selectedProducts.filter((product) => product.sourceUrl)
     if (toRetrieve.length === 0) return
     setRetrievingBulk(true)
     try {
-      let imageCount = 0
       let sourceCount = 0
       for (const product of toRetrieve) {
         setActiveProductId(product.id)
         try {
           const retrievedProduct = await retrieveProduct(draft.draft.id, product.id)
           replaceProduct(retrievedProduct)
-          if (retrievedProduct.imageStatus === 'valid') imageCount++
           if (retrievedProduct.enrichmentStatus === 'ready') sourceCount++
+          // Download the main product image alongside source content
+          if (retrievedProduct.imageUrl && retrievedProduct.imageStatus !== 'valid') {
+            try {
+              const imageResult = await downloadProductImage(draft.draft.id, product.id)
+              replaceProduct(imageResult)
+            } catch {
+              // Non-fatal — continue with remaining products
+            }
+          }
         } catch (requestError) {
           showToast(
             'error',
@@ -836,11 +942,8 @@ function AppContent() {
           )
         }
       }
-      const retrievedParts: string[] = []
-      if (imageCount > 0) retrievedParts.push(`${imageCount} image${imageCount !== 1 ? 's' : ''}`)
-      if (sourceCount > 0) retrievedParts.push(`${sourceCount} source detail${sourceCount !== 1 ? 's' : ''}`)
-      if (retrievedParts.length > 0) {
-        showToast('success', `Retrieved ${retrievedParts.join(' and ')} across ${toRetrieve.length} selected products.`)
+      if (sourceCount > 0) {
+        showToast('success', `Retrieved ${sourceCount} source detail${sourceCount !== 1 ? 's' : ''} across ${toRetrieve.length} selected products.`)
       } else {
         showToast('info', `No product-specific source data was found for ${toRetrieve.length} selected products.`)
       }
@@ -852,16 +955,19 @@ function AppContent() {
   const retrieveLabel = (product: ProductDraft) => {
     if (!product.selected) return 'Check row first'
     if (retrievingProductId === product.id) return 'Retrieving…'
-    if (
-      product.enrichmentStatus === 'failed' ||
-      product.enrichmentStatus === 'blocked' ||
-      product.imageStatus === 'failed' ||
-      product.imageStatus === 'blocked'
-    )
+    if (product.enrichmentStatus === 'failed' || product.enrichmentStatus === 'blocked')
       return 'Retry source data'
-    if (product.enrichmentStatus === 'ready' || product.imageStatus === 'valid')
+    if (product.enrichmentStatus === 'ready')
       return 'Retrieve again'
     return 'Retrieve source data'
+  }
+  // VIC-20 Issue 7: Separate label for the explicit image download button.
+  const imageDownloadLabel = (product: ProductDraft) => {
+    if (!product.imageUrl) return 'No image URL'
+    if (downloadingImageId === product.id) return 'Downloading…'
+    if (product.imageStatus === 'failed' || product.imageStatus === 'blocked') return 'Retry image'
+    if (product.imageStatus === 'valid') return 'Download again'
+    return 'Download image'
   }
 
   const handleShowIssues = async () => {
@@ -876,6 +982,21 @@ function AppContent() {
       setLogIssues([])
     } finally {
       setIssuesLoading(false)
+    }
+  }
+
+  const handleShowProductsLoad = async () => {
+    if (!draft) return
+    setProductsLoadOpen(true)
+    setProductsLoadLoading(true)
+    try {
+      const entries = await getProductsLoad(draft.draft.id)
+      setProductsLoadEntries(entries)
+    } catch (requestError) {
+      showToast('error', requestError instanceof Error ? requestError.message : 'The products load log could not be loaded.')
+      setProductsLoadEntries([])
+    } finally {
+      setProductsLoadLoading(false)
     }
   }
 
@@ -901,6 +1022,7 @@ function AppContent() {
         validSelectedProducts.map((product) => product.id),
         publishChanges,
         globalCollectionIds,
+        globalCategoryIds,
       )
       setDraft(result.draft)
       setDirtyFields((current) => {
@@ -946,7 +1068,7 @@ function AppContent() {
 
   const renderNumberInput = (
     label: string,
-    field: 'stockOnHand' | 'casePrice' | 'unitPrice' | 'suggestedSalePrice' | 'inventoryQuantity',
+    field: 'stockOnHand' | 'casePrice' | 'unitPrice' | 'suggestedSalePrice' | 'inventoryQuantity' | 'costPrice',
     value: number | null,
   ) => {
     const isDirty =
@@ -969,6 +1091,60 @@ function AppContent() {
     )
   }
 
+  const execFormat = (command: string, value?: string) => {
+    document.execCommand(command, false, value)
+    const editor = document.getElementById('rich-text-editor')
+    if (editor) {
+      patchProduct(activeProduct!.id, { descriptionHtml: editor.innerHTML } as Partial<ProductDraft>)
+    }
+  }
+
+  const insertImage = () => {
+    const url = window.prompt('Enter image URL:')
+    if (url) execFormat('insertImage', url)
+  }
+
+  const renderRichTextInput = (
+    label: string,
+    value: string,
+  ) => {
+    const isDirty = activeProduct && 'descriptionHtml' in (dirtyFieldsFor(activeProduct.id) ?? {})
+    return (
+      <label className={`field ${isDirty ? 'dirty' : ''}`}>
+        <span>{label}</span>
+        <div className={`rich-text-editor ${isDirty ? 'dirty' : ''}`}>
+          <div className="rich-text-toolbar">
+            <button type="button" className="rtb-btn" onClick={() => execFormat('bold')} title="Bold"><b>B</b></button>
+            <button type="button" className="rtb-btn" onClick={() => execFormat('italic')} title="Italic"><i>I</i></button>
+            <button type="button" className="rtb-btn" onClick={() => execFormat('underline')} title="Underline"><u>U</u></button>
+            <span className="rtb-sep" />
+            <button type="button" className="rtb-btn" onClick={() => execFormat('insertUnorderedList')} title="Bullet list">•≡</button>
+            <button type="button" className="rtb-btn" onClick={() => execFormat('insertOrderedList')} title="Numbered list">1.</button>
+            <span className="rtb-sep" />
+            <button type="button" className="rtb-btn" onClick={() => execFormat('createLink', 'https://')} title="Link">🔗</button>
+            <button type="button" className="rtb-btn" onClick={insertImage} title="Insert image">🖼</button>
+            <span className="rtb-sep" />
+            <button type="button" className="rtb-btn" onClick={() => execFormat('removeFormat')} title="Clear formatting">✕</button>
+          </div>
+          <div
+            id="rich-text-editor"
+            className="rich-text-area"
+            contentEditable
+            suppressContentEditableWarning
+            data-placeholder="Fetched description or your own copy"
+            onInput={() => {
+              const editor = document.getElementById('rich-text-editor')
+              if (editor) {
+                patchProduct(activeProduct!.id, { descriptionHtml: editor.innerHTML } as Partial<ProductDraft>)
+              }
+            }}
+            dangerouslySetInnerHTML={{ __html: value ?? '' }}
+          />
+        </div>
+      </label>
+    )
+  }
+
   const renderTextInput = (
     label: string,
     field: keyof ProductDraft,
@@ -977,6 +1153,9 @@ function AppContent() {
   ) => {
     const isDirty =
       activeProduct && field in (dirtyFieldsFor(activeProduct.id) ?? {})
+    if (field === 'descriptionHtml' && isTextarea) {
+      return renderRichTextInput(label, value ?? '')
+    }
     const commonProps = {
       value: value ?? '',
       onChange: (event: ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) =>
@@ -1085,9 +1264,33 @@ function AppContent() {
         <main className="app-shell landing-shell">
         <header className="brandbar">
           <div className="brandmark">
-            <span className="brand-dot" /> CELLAR / DRIVE
+            <span className="brand-dot" />
+            {supplier === 'vican' ? 'VICAN VISIONS' : 'CELLAR / DRIVE'}
+            <span className="brand-context">PRODUCT DESK</span>
           </div>
           <div className="header-actions">
+            <label className="supplier-select">
+              <span>Supplier</span>
+              <select
+                value={pendingSupplier ?? supplier}
+                onChange={(e) => setPendingSupplier(e.target.value as 'cellar' | 'vican' | null)}
+              >
+                <option value="cellar">Cellar Drive</option>
+                <option value="vican">Vican Visions</option>
+              </select>
+              {pendingSupplier && pendingSupplier !== supplier && (
+                <span className="supplier-actions">
+                  <button type="button" className="button button-primary" style={{ display: 'inline-block', padding: '4px 8px', fontSize: '11px', marginLeft: '4px' }} onClick={() => {
+                    void handleSupplierSwitch(pendingSupplier!);
+                  }}>
+                    Apply
+                  </button>
+                  <button type="button" className="button button-quiet" style={{ display: 'inline-block', padding: '4px 8px', fontSize: '11px', marginLeft: '4px' }} onClick={() => setPendingSupplier(null)}>
+                    Cancel
+                  </button>
+                </span>
+              )}
+            </label>
             <ThemeToggle />
             <BackgroundSettings />
             {isLoggedIn && (
@@ -1124,7 +1327,7 @@ function AppContent() {
         </header>
         <section className="import-hero">
           <div className="eyebrow">SUPPLIER PRODUCT DESK / 01</div>
-          <h1 className="page-title">Cellar Drive product update</h1>
+          <h1 className="page-title">{supplier === 'vican' ? 'Vican Visions (AliExpress) product update' : 'Cellar Drive product update'}</h1>
           <p className="hero-copy">
             Load a workbook, enrich each row from its source page, make the edits that
             matter, then post only the products you approve.
@@ -1150,32 +1353,29 @@ function AppContent() {
                   : 'Upload supplier workbook'}
             </strong>
             <span>
-              Check a row, then choose when its column A image and column F source page
-              are retrieved.
+              Check a row, then choose when its source page details and its
+              image are retrieved — these are now separate actions.
             </span>
           </label>
           <div className="mapping-strip">
-            <span>
-              <b>A</b> image
-            </span>
-            <span>
-              <b>E</b> title
-            </span>
-            <span>
-              <b>F</b> source page
-            </span>
-            <span>
-              <b>G</b> stock
-            </span>
-            <span>
-              <b>I</b> case
-            </span>
-            <span>
-              <b>J</b> unit price
-            </span>
-            <span>
-              <b>K</b> type
-            </span>
+            {supplier === 'vican' ? (
+              <>
+                <span><b>A</b> product URL</span>
+                <span><b>B-F</b> images</span>
+                <span><b>I/J</b> title</span>
+                <span><b>K/L/M</b> price (frag)</span>
+              </>
+            ) : (
+              <>
+                <span><b>A</b> image</span>
+                <span><b>E</b> title</span>
+                <span><b>F</b> source page</span>
+                <span><b>G</b> stock</span>
+                <span><b>I</b> case</span>
+                <span><b>J</b> unit price</span>
+                <span><b>K</b> type</span>
+              </>
+            )}
           </div>
         </section>
       </main>
@@ -1184,31 +1384,71 @@ function AppContent() {
       {/* ── Header ── */}
       <header className="brandbar">
         <div className="brandmark">
-          <span className="brand-dot" /> CELLAR / DRIVE <span className="brand-context">PRODUCT DESK</span>
+          <span className="brand-dot" />
+          {supplier === 'vican' ? 'VICAN VISIONS' : 'CELLAR / DRIVE'}
+          <span className="brand-context">PRODUCT DESK</span>
         </div>
         <div className="header-actions">
+          <label className="supplier-select">
+            <span>Supplier</span>
+            <select
+              value={pendingSupplier ?? supplier}
+              onChange={(e) => setPendingSupplier(e.target.value as 'cellar' | 'vican' | null)}
+            >
+              <option value="cellar">Cellar Drive</option>
+              <option value="vican">Vican Visions</option>
+            </select>
+            {pendingSupplier && pendingSupplier !== supplier && (
+              <span style={{ marginLeft: 8, display: 'inline-flex', gap: 6, alignItems: 'center' }}>
+                <button type="button" className="button button-primary" style={{ fontSize: 11, padding: '4px 8px', height: 'auto' }} onClick={() => {
+                    void handleSupplierSwitch(pendingSupplier!);
+                  }}>
+                  Apply
+                </button>
+                <button type="button" className="button button-quiet" style={{ fontSize: 11, padding: '4px 8px', height: 'auto' }} onClick={() => setPendingSupplier(null)}>
+                  Cancel
+                </button>
+              </span>
+            )}
+          </label>
           <ThemeToggle />
           <BackgroundSettings />
-          {readiness && (
+          {readiness && supplier === 'vican' ? (
             <span
-              className={`connection-pill ${readiness.shopifyConfigured ? 'connected' : 'disconnected'}`}
+              className={`woo-connection-pill ${readiness.wooConfigured ? 'connected' : 'disconnected'}`}
               title={
-                readiness.shopifyConfigured
-                  ? `Shopify connected: ${readiness.storeDomain}`
-                  : `Shopify not configured: missing ${readiness.missing?.join(', ') ?? 'credentials'}`
+                readiness.wooConfigured
+                  ? `WooCommerce connected: ${readiness.wooStoreUrl}`
+                  : `WooCommerce not configured: missing ${readiness.wooMissing?.join(', ') ?? 'credentials'}`
               }
             >
               <span className="connection-dot" />
-              {readiness.shopifyConfigured
-                ? `Connected: ${readiness.storeDomain}`
-                : 'Shopify not configured'}
+              {readiness.wooConfigured
+                ? `Woo: ${readiness.wooStoreUrl}`
+                : 'WooCommerce not configured'}
             </span>
-            )}
-            {readiness && (
-              <span className="version-tag" title="Application version">
-                v{readiness.version}
+          ) : (
+            readiness && (
+              <span
+                className={`connection-pill ${readiness.shopifyConfigured ? 'connected' : 'disconnected'}`}
+                title={
+                  readiness.shopifyConfigured
+                    ? `Shopify connected: ${readiness.storeDomain}`
+                    : `Shopify not configured: missing ${readiness.missing?.join(', ') ?? 'credentials'}`
+                }
+              >
+                <span className="connection-dot" />
+                {readiness.shopifyConfigured
+                  ? `Connected: ${readiness.storeDomain}`
+                  : 'Shopify not configured'}
               </span>
-            )}
+            )
+          )}
+          {readiness && (
+            <span className="version-tag" title="Application version">
+              v{readiness.version}
+            </span>
+          )}
           <button
             type="button"
             className="button button-primary"
@@ -1270,273 +1510,390 @@ function AppContent() {
         </div>
       </header>
 
-      {/* ── Workspace heading ── */}
-      <section className="workspace-heading">
-        <div>
-          <div className="eyebrow">IMPORT / {draft.draft.filename}</div>
-          <h1 className="page-title">Cellar Drive product update</h1>
-          <p>Review the source data. Shape the details. Post with intent.</p>
-        </div>
-        <div className="status-box">
-          <div className="status-item">
-            <span>Rows</span><strong>{draft.draft.totalProducts.toLocaleString()}</strong>
+      {/* ── Top controls bar — all filters/stats above the table ── */}
+      <section className="top-controls-bar">
+        <div className="top-controls-left">
+          <div className="status-box-inline">
+            <div className="eyebrow-small">IMPORT / {draft.draft.filename}</div>
+            <div className="status-box">
+              <div className="status-item">
+                <span>Rows</span><strong>{draft.draft.totalProducts.toLocaleString()}</strong>
+              </div>
+              <div className="status-item">
+                <span>Selected</span><strong>{draft.draft.selectedProducts.toLocaleString()}</strong>
+              </div>
+              <div className="status-item">
+                <span>Source ready</span><strong>{draft.draft.readyProducts.toLocaleString()}</strong>
+              </div>
+              <button
+                type="button"
+                className={`status-item status-button ${issuesOpen ? 'is-active' : ''}`}
+                onClick={() => void handleShowIssues()}
+                aria-expanded={issuesOpen}
+              >
+                <span>Issues</span><strong className={draft.draft.failedProducts ? 'metric-alert' : ''}>{draft.draft.failedProducts.toLocaleString()}</strong>
+              </button>
+              <button
+                type="button"
+                className={`status-item status-button ${productsLoadOpen ? 'is-active' : ''}`}
+                onClick={() => void handleShowProductsLoad()}
+                aria-expanded={productsLoadOpen}
+              >
+                <span>Products Load</span><strong className={productsLoadEntries.length ? 'metric-alert' : ''}>{productsLoadEntries.length.toLocaleString()}</strong>
+              </button>
+            </div>
           </div>
-          <div className="status-item">
-            <span>Selected</span><strong>{draft.draft.selectedProducts.toLocaleString()}</strong>
-          </div>
-          <div className="status-item">
-            <span>Source ready</span><strong>{draft.draft.readyProducts.toLocaleString()}</strong>
-          </div>
-          <button
-            type="button"
-            className={`status-item status-button ${issuesOpen ? 'is-active' : ''}`}
-            onClick={() => void handleShowIssues()}
-            aria-expanded={issuesOpen}
-          >
-            <span>Issues</span><strong className={draft.draft.failedProducts ? 'metric-alert' : ''}>{draft.draft.failedProducts.toLocaleString()}</strong>
-          </button>
-        </div>
-      </section>
-
-      {/* ── Toolbar ── */}
-      <section className="toolbar">
-        <label className="search-field">
-          <span>Search</span>
-          <input
-            value={query}
-            onChange={(event) => setQuery(event.target.value)}
-            placeholder="Title or source URL"
-          />
-        </label>
-        <label className="filter-field">
-          <span>Status</span>
-          <select
-            value={statusFilter}
-            onChange={(event) => setStatusFilter(event.target.value as StatusFilter)}
-          >
-            <option value="all">All rows</option>
-            <option value="pending">Pending</option>
-            <option value="ready">Ready</option>
-            <option value="failed">Needs attention</option>
-            <option value="published">Published</option>
-          </select>
-        </label>
-        <button
-          type="button"
-          className="button button-secondary"
-          onClick={toggleAllVisible}
-        >
-          {visibleProducts.every((product) => product.selected)
-            ? 'Clear visible'
-            : 'Select visible'}
-        </button>
-        <button
-          type="button"
-          className="button button-secondary"
-          disabled={selectedProducts.length === 0 || clearingChecked}
-          onClick={clearAllChecked}
-        >
-          {clearingChecked ? 'Clearing…' : `Clear all checked (${selectedProducts.length})`}
-        </button>
-        <button
-          type="button"
-          className="button button-secondary"
-          disabled={busy || publishing || selectedProducts.filter((p) => p.sourceUrl || p.imageUrl).length === 0}
-          onClick={() => void handleBulkRetrieve()}
-        >
-          {retrievingBulk ? 'Retrieving…' : `Retrieve source data (${selectedProducts.filter((p) => p.sourceUrl || p.imageUrl).length})`}
-        </button>
-        <button
-          type="button"
-          className="button button-primary"
-          disabled={validSelectedProducts.length === 0 || publishing}
-          onClick={() => setReviewOpen(true)}
-        >
-          {publishing ? 'Posting…' : `Post selected (${validSelectedProducts.length})`}
-        </button>
-      </section>
-
-      {/* ── Filter bar ── */}
-      <section className="filter-bar" aria-label="Column filters">
-        <div className="filter-bar-label">
-          <span>Filter columns</span>
-          <small>
-            {Object.values(columnFilters).reduce((total, filter) => {
-              if (filter.kind === 'select') return total + filter.values.length
-              if (filter.kind === 'range') return total + (filter.value ? 1 : 0)
-              return total + (filter.pattern ? 1 : 0)
-            }, 0)}{' '}
-            active
-          </small>
-        </div>
-        {filterFieldConfig.map(({ field, label, kind }) => {
-          const filter = columnFilters[field]
-          if (kind === 'range') {
-            return (
-              <RangeFilter
-                key={field}
-                label={label}
-                value={filter?.kind === 'range' ? { operator: filter.operator, value: filter.value } : { operator: '=', value: '' }}
-                onChange={(value) =>
-                  setColumnFilters((current) => ({ ...current, [field]: { kind: 'range', operator: value.operator, value: value.value } }))
-                }
+          <section className="toolbar">
+            <label className="search-field">
+              <span>Search</span>
+              <input
+                value={query}
+                onChange={(event) => setQuery(event.target.value)}
+                placeholder="Title or source URL"
               />
-            )
-          }
-          if (kind === 'text') {
-            return (
-              <TextFilter
-                key={field}
-                label={label}
-                pattern={filter?.kind === 'text' ? filter.pattern : ''}
-                onChange={(pattern) =>
-                  setColumnFilters((current) => ({ ...current, [field]: { kind: 'text', pattern } }))
-                }
-              />
-            )
-          }
-          return (
-            <FilterMenu
-              key={field}
-              label={label}
-              options={filterOptions[field] ?? []}
-              selected={filter?.kind === 'select' ? filter.values : []}
-              onChange={(values) =>
-                setColumnFilters((current) => ({ ...current, [field]: { kind: 'select', values } }))
+            </label>
+            <label className="filter-field">
+              <span>Status</span>
+              <select
+                value={statusFilter}
+                onChange={(event) => setStatusFilter(event.target.value as StatusFilter)}
+              >
+                <option value="all">All rows</option>
+                <option value="pending">Pending</option>
+                <option value="ready">Ready</option>
+                <option value="failed">Needs attention</option>
+                <option value="published">Published</option>
+              </select>
+            </label>
+            <button
+              type="button"
+              className="button button-secondary"
+              onClick={toggleAllVisible}
+            >
+              {visibleProducts.every((product) => product.selected)
+                ? 'Clear visible'
+                : 'Select visible'}
+            </button>
+            <button
+              type="button"
+              className="button button-secondary"
+              disabled={selectedProducts.length === 0 || clearingChecked}
+              onClick={clearAllChecked}
+            >
+              {clearingChecked ? 'Clearing…' : `Clear all checked (${selectedProducts.length})`}
+            </button>
+            <button
+              type="button"
+              className="button button-secondary"
+              disabled={busy || publishing || selectedProducts.filter((p) => p.sourceUrl).length === 0}
+              onClick={() => void handleBulkRetrieve()}
+            >
+              {retrievingBulk ? 'Retrieving…' : `Retrieve source data (${selectedProducts.filter((p) => p.sourceUrl).length})`}
+            </button>
+            <button
+              type="button"
+              className="button button-primary"
+              disabled={validSelectedProducts.length === 0 || publishing}
+              onClick={() => setReviewOpen(true)}
+            >
+              {publishing ? 'Posting…' : `Post selected (${validSelectedProducts.length})`}
+            </button>
+          </section>
+          <section className="filter-bar" aria-label="Column filters">
+            <div className="filter-bar-label">
+              <span>Filter columns</span>
+              <small>
+                {Object.values(columnFilters).reduce((total, filter) => {
+                  if (filter.kind === 'select') return total + filter.values.length
+                  if (filter.kind === 'range') return total + (filter.value ? 1 : 0)
+                  return total + (filter.pattern ? 1 : 0)
+                }, 0)}{' '}
+                active
+              </small>
+            </div>
+            {activeFilterConfig.map(({ field, label, kind }) => {
+              const filter = columnFilters[field]
+              if (kind === 'range') {
+                return (
+                  <RangeFilter
+                    key={field}
+                    label={label}
+                    value={filter?.kind === 'range' ? { operator: filter.operator, value: filter.value } : { operator: '=', value: '' }}
+                    onChange={(value) =>
+                      setColumnFilters((current) => ({ ...current, [field]: { kind: 'range', operator: value.operator, value: value.value } }))
+                    }
+                  />
+                )
               }
-            />
-          )
-        })}
-        <label className="filter-field title-sort">
-          <span>Sort</span>
-          <select
-            value={sortOption}
-            onChange={(event) => setSortOption(event.target.value as SortOption)}
-          >
-            <option value="none">Original order</option>
-            <option value="selected">Checked items first</option>
-            <option value="title-asc">Title A→Z</option>
-            <option value="title-desc">Title Z→A</option>
-            <option value="source">Source status</option>
-            <option value="shopify">Shopify status</option>
-          </select>
-        </label>
-        <button
-          type="button"
-          className="text-button"
-          disabled={
-            Object.keys(columnFilters).length === 0 && sortOption === 'none'
-          }
-          onClick={() => {
-            setColumnFilters({})
-            setSortOption('none')
-          }}
-        >
-          Clear filters
-        </button>
+              if (kind === 'text') {
+                return (
+                  <TextFilter
+                    key={field}
+                    label={label}
+                    pattern={filter?.kind === 'text' ? filter.pattern : ''}
+                    onChange={(pattern) =>
+                      setColumnFilters((current) => ({ ...current, [field]: { kind: 'text', pattern } }))
+                    }
+                  />
+                )
+              }
+              return (
+                <FilterMenu
+                  key={field}
+                  label={label}
+                  options={filterOptions[field] ?? []}
+                  selected={filter?.kind === 'select' ? filter.values : []}
+                  onChange={(values) =>
+                    setColumnFilters((current) => ({ ...current, [field]: { kind: 'select', values } }))
+                  }
+                />
+              )
+            })}
+            <button
+              type="button"
+              className="text-button"
+              disabled={
+                Object.keys(columnFilters).length === 0 && sortOption === 'none'
+              }
+              onClick={() => {
+                setColumnFilters({})
+                setSortOption('none')
+              }}
+            >
+              Clear filters
+            </button>
+          </section>
+          <div className="top-pagination top-pagination-above-table">
+            <button
+              type="button"
+              className="button button-secondary"
+              disabled={page <= 1}
+              onClick={() => setPage((current) => Math.max(1, current - 1))}
+            >
+              Previous
+            </button>
+            <span>
+              {page} / {pageCount}
+            </span>
+            <button
+              type="button"
+              className="button button-secondary"
+              disabled={page >= pageCount}
+              onClick={() => setPage((current) => Math.min(pageCount, current + 1))}
+            >
+              Next
+            </button>
+            <label className="filter-field title-sort">
+              <span>Sort</span>
+              <select
+                value={sortOption}
+                onChange={(event) => setSortOption(event.target.value as SortOption)}
+              >
+                <option value="none">Original order</option>
+                <option value="selected">Checked items first</option>
+                <option value="title-asc">Title A→Z</option>
+                <option value="title-desc">Title Z→A</option>
+                <option value="source">Source status</option>
+                <option value="shopify">Status</option>
+              </select>
+            </label>
+          </div>
+        </div>
       </section>
 
       {/* ── Table + Editor ── */}
       <section className="workspace-grid">
-        <div className="table-panel">
-          <div className="table-meta">
-            <span>{filteredProducts.length.toLocaleString()} matching rows</span>
-            <span>
-              Page {page} of {pageCount}
-            </span>
+        <div className="list-panel">
+          <div className="list-header">
+            <div className="list-header-row">
+              <div className="check-cell">
+                <input
+                  type="checkbox"
+                  checked={
+                    visibleProducts.length > 0 &&
+                    visibleProducts.every((product) => product.selected)
+                  }
+                  onChange={toggleAllVisible}
+                  aria-label="Select all visible products"
+                />
+              </div>
+              <div className="list-header-cell">Product</div>
+              <div className="list-header-cell">Unit {supplier !== 'vican' && '/ case'}</div>
+              <div className="list-header-cell">Sale price</div>
+              <div className="list-header-cell">Stock</div>
+              <div className="list-header-cell">Source</div>
+              <div className="list-header-cell">Status</div>
+              <div className="list-header-cell">Source data</div>
+            </div>
           </div>
-          <div className="table-wrap">
-            <table>
-              <thead>
-                <tr>
-                  <th className="check-column">
+          <div className="list-wrap">
+            {visibleProducts.map((product) => {
+              const isActive = activeProduct?.id === product.id
+              return (
+                <div
+                  key={product.id}
+                  className={`product-list-row ${isActive ? 'is-active' : ''}`}
+                  onClick={() => setActiveProductId(product.id)}
+                >
+                  <div
+                    className="check-cell"
+                    onClick={(event) => event.stopPropagation()}
+                  >
                     <input
                       type="checkbox"
-                      checked={
-                        visibleProducts.length > 0 &&
-                        visibleProducts.every((product) => product.selected)
+                      checked={product.selected}
+                      onChange={(event) =>
+                        patchProduct(product.id, {
+                          selected: event.target.checked,
+                        })
                       }
-                      onChange={toggleAllVisible}
-                      aria-label="Select all visible products"
+                      aria-label={`Select ${product.title}`}
                     />
-                  </th>
-                  <th>Product</th>
-                  <th>Unit / case</th>
-                  <th>Sale price</th>
-                  <th>Stock</th>
-                  <th>Source</th>
-                  <th>Shopify</th>
-                  <th>Source data</th>
-                </tr>
-              </thead>
-              <tbody>
-                {visibleProducts.map((product) => (
-                  <tr
-                    key={product.id}
-                    className={activeProduct?.id === product.id ? 'is-active' : ''}
-                    onClick={() => setActiveProductId(product.id)}
-                  >
-                    <td
-                      className="check-column"
-                      onClick={(event) => event.stopPropagation()}
-                    >
-                      <input
-                        type="checkbox"
-                        checked={product.selected}
-                        onChange={(event) =>
-                          patchProduct(product.id, {
-                            selected: event.target.checked,
-                          })
-                        }
-                        aria-label={`Select ${product.title}`}
-                      />
-                    </td>
-                    <td>
-                      <div className="product-cell">
-                        <div className="thumb">
-                          {product.imageLocalUrl ? (
-                            <img src={product.imageLocalUrl} alt="" loading="lazy" />
+                  </div>
+                  <div className="list-cell product-cell">
+                    <div className="thumb">
+                      {product.imageLocalUrl ? (
+                        <img src={product.imageLocalUrl} alt="" loading="lazy" />
+                      ) : (
+                        <span>{product.imageStatus === 'pending' ? '…' : 'IMG'}</span>
+                      )}
+                    </div>
+                    <div>
+                      <strong>
+                        {product.sourceUrl ? (
+                          product.supplier === 'vican' ? (
+                            <a
+                              href={product.sourceUrl}
+                              onClick={(event) => {
+                                event.preventDefault();
+                                event.stopPropagation();
+                                if (browserWindowRef.current && !browserWindowRef.current.closed) {
+                                  browserWindowRef.current.location.href = product.sourceUrl
+                                } else {
+                                  browserWindowRef.current = window.open(product.sourceUrl, 'ecomint-brower', 'width=1200,height=800,scrollbars=yes,resizable=yes,alwaysOnTop=yes')
+                                }
+                              }}
+                              title="Open source page"
+                            >
+                              {product.title || 'Untitled product'}
+                            </a>
                           ) : (
-                            <span>{product.imageStatus === 'pending' ? '…' : 'IMG'}</span>
-                          )}
-                        </div>
-                        <div>
-                          <strong>{product.title || 'Untitled product'}</strong>
-                          <small>
-                            Row {product.rowNumber}{' '}
-                            {product.validationErrors.length
-                              ? ` / ${product.validationErrors.length} issue${product.validationErrors.length === 1 ? '' : 's'}`
-                              : ''}
-                          </small>
-                        </div>
-                      </div>
-                    </td>
-                    <td>
-                      <strong>{money(product.unitPrice)}</strong>
-                      <small>{money(product.casePrice)} case</small>
-                    </td>
-                    <td><strong>{money(product.suggestedSalePrice)}</strong></td>
-                    <td>{product.stockOnHand ?? '—'}</td>
-                    <td>{renderStatus(product.enrichmentStatus)}</td>
-                    <td>{renderStatus(product.publishStatus)}</td>
-                    <td className="source-action" onClick={(event) => event.stopPropagation()}>
+                            <a
+                              href={product.sourceUrl}
+                              target="_blank"
+                              rel="noreferrer"
+                              onClick={(event) => event.stopPropagation()}
+                              title="Open source page"
+                            >
+                              {product.title || 'Untitled product'}
+                            </a>
+                          )
+                        ) : (
+                          product.title || 'Untitled product'
+                        )}
+                      </strong>
+                      {product.supplier === 'vican' && product.sourceUrl && (
+                        <>
+                          <button
+                            type="button"
+                            className="text-button"
+                            style={{ marginLeft: 8, fontSize: 12 }}
+                            onClick={(event) => {
+                              event.stopPropagation()
+                              setBrowsingProductId(browsingProductId === product.id ? null : product.id)
+                            }}
+                          >
+                            {browsingProductId === product.id ? 'Close' : 'Browse'}
+                          </button>
+                          <button
+                            type="button"
+                            className="text-button"
+                            style={{ marginLeft: 8, fontSize: 12 }}
+                            onClick={(event) => {
+                              event.stopPropagation()
+                              if (browserWindowRef.current && !browserWindowRef.current.closed) {
+                                browserWindowRef.current.location.href = product.sourceUrl
+                              } else {
+                                browserWindowRef.current = window.open(product.sourceUrl, 'ecomint-brower', 'width=1200,height=800,scrollbars=yes,resizable=yes,alwaysOnTop=yes')
+                              }
+                            }}
+                          >
+                            Open
+                          </button>
+                        </>
+                      )}
+                      <small>
+                        Row {product.rowNumber}{' '}
+                        {product.validationErrors.length
+                          ? ` / ${product.validationErrors.length} issue${product.validationErrors.length === 1 ? '' : 's'}`
+                          : ''}
+                      </small>
+                    </div>
+                  </div>
+                  <div className="list-cell">
+                    <strong>{money(product.unitPrice)}</strong>
+                    {supplier !== 'vican' && <small>{money(product.casePrice)} case</small>}
+                  </div>
+                  <div className="list-cell"><strong>{money(product.suggestedSalePrice)}</strong></div>
+                  <div className="list-cell">{product.stockOnHand ?? '—'}</div>
+                  <div className="list-cell">{renderStatus(product.enrichmentStatus)}</div>
+                  <div className="list-cell">{renderStatus(product.publishStatus)}</div>
+                  <div className="list-cell source-action" onClick={(event) => event.stopPropagation()}>
+                    <button
+                      type="button"
+                      className="row-action"
+                      disabled={
+                        busy ||
+                        !product.selected ||
+                        !product.sourceUrl
+                      }
+                      onClick={() => void handleRetrieve(product)}
+                    >
+                      {retrieveLabel(product)}
+                    </button>
+                  </div>
+                </div>
+              )
+            })}
+            {browsingProduct && browsingProduct.supplier === 'vican' && browsingProduct.sourceUrl && (
+              <div className="inline-browser-row">
+                <div className="inline-browser">
+                  <div className="inline-browser-toolbar">
+                    <span className="inline-browser-toolbar-title">🌐 {browsingProduct.title}</span>
+                    <div className="inline-browser-toolbar-actions">
                       <button
                         type="button"
-                        className="row-action"
-                        disabled={
-                          busy ||
-                          !product.selected ||
-                          (!product.sourceUrl && !product.imageUrl)
-                        }
-                        onClick={() => void handleRetrieve(product)}
+                        className="inline-browser-toolbar-btn"
+                        onClick={() => {
+                          if (browserWindowRef.current && !browserWindowRef.current.closed) {
+                            browserWindowRef.current.location.href = browsingProduct.sourceUrl
+                          } else {
+                            browserWindowRef.current = window.open(browsingProduct.sourceUrl, 'ecomint-brower', 'width=1200,height=800,scrollbars=yes,resizable=yes,alwaysOnTop=yes')
+                          }
+                        }}
                       >
-                        {retrieveLabel(product)}
+                        ↗ Open externally
                       </button>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+                      <button
+                        type="button"
+                        className="inline-browser-toolbar-btn"
+                        onClick={() => setBrowsingProductId(null)}
+                      >
+                        ✕ Close
+                      </button>
+                    </div>
+                  </div>
+                  <div className="inline-browser-frame">
+                    <iframe
+                      src={browsingProduct.sourceUrl}
+                      title={`Browse ${browsingProduct.title}`}
+                      sandbox="allow-scripts allow-same-origin allow-forms allow-popups"
+                      loading="lazy"
+                    />
+                  </div>
+                </div>
+              </div>
+            )}
             {visibleProducts.length === 0 && (
               <div className="empty-state">No products match this view.</div>
             )}
@@ -1564,60 +1921,132 @@ function AppContent() {
           </div>
         </div>
 
-        {/* ── Editor ── */}
-        <aside className="editor-panel">
+        {/* ── Detail pane ── */}
+        <aside className="detail-pane-container">
+          <div className="detail-pane">
+          {/* ── Product Details section ── */}
+          <div className="detail-section-heading">
+            <div className="eyebrow">PRODUCT DETAILS</div>
+            <span>Details</span>
+          </div>
           {activeProduct ? (
             <>
+              {/* ── Image details ── */}
+              <section className="image-details" aria-label="Retrieved image details">
+                <div className="image-details-heading">
+                  {renderStatus(activeProduct.imageStatus)}
+                </div>
+                <div className="image-details-body">
+                  <div className="editor-image">
+                    {activeProduct.imageLocalUrl ? (
+                      <img
+                        src={activeProduct.imageLocalUrl}
+                        alt={`Retrieved image for ${activeProduct.title}`}
+                      />
+                    ) : (
+                      <span>
+                        {activeProduct.imageStatus === 'pending'
+                          ? 'Not retrieved'
+                          : 'No saved image'}
+                      </span>
+                    )}
+                  </div>
+                  <dl className="image-meta">
+                    <div>
+                      <dt>Column A source</dt>
+                      <dd>
+                        {activeProduct.imageUrl ? (
+                          <a
+                            href={activeProduct.imageUrl}
+                            target="_blank"
+                            rel="noreferrer"
+                          >
+                            Open image source
+                          </a>
+                        ) : (
+                          'Not provided'
+                        )}
+                      </dd>
+                    </div>
+                    <div>
+                      <dt>Saved file</dt>
+                      <dd>{activeProduct.imageLocalFilename || 'Not retrieved'}</dd>
+                    </div>
+                    <div>
+                      <dt>Retrieval</dt>
+                      <dd>
+                        {activeProduct.imageStatus === 'valid'
+                          ? 'Downloaded to productimage'
+                          : 'Click Download image to save locally'}
+                      </dd>
+                    </div>
+                    {/* VIC-20 Issue 7: Explicit download button — images are now
+                        also auto-downloaded during Retrieve source data, but
+                        this button remains available for retrying failed or
+                        skipped image downloads independently. */}
+                    {activeProduct.imageUrl && activeProduct.imageStatus !== 'valid' && (
+                      <div className="image-download-action">
+                        <button
+                          type="button"
+                          className="button button-secondary"
+                          style={{ fontSize: 11, padding: '4px 8px', height: 'auto' }}
+                          disabled={busy || downloadingImageId === activeProduct.id || activeProduct.imageStatus === 'blocked'}
+                          onClick={() => void handleDownloadImage(activeProduct)}
+                        >
+                          {downloadingImageId === activeProduct.id ? 'Downloading…' : imageDownloadLabel(activeProduct)}
+                        </button>
+                      </div>
+                    )}
+                  </dl>
+                </div>
+              </section>
+
+              {/* VIC-17: Vican image gallery (up to 5 images from template columns B-F) */}
+              {activeProduct.supplier === 'vican' && (
+                <section className="image-gallery-section" aria-label="Vican product image gallery">
+                  <div className="field-group-heading">
+                    <div className="eyebrow">IMAGE GALLERY</div>
+                    <span>Up to 5 images. Column B is the default main product picture.</span>
+                  </div>
+                  {/* VIC-20 Issue 7: Gallery images come from the workbook (columns B-F)
+                      and are available immediately after import — they are URLs,
+                      not server-side downloads. Source-page images are merged in
+                      after Retrieve is pressed. Images are only DOWNLOADED to the
+                      server via the explicit Download image button above. */}
+                  {activeProduct.aliexpressImages.length > 0 ? (
+                    <div className="image-gallery">
+                      {activeProduct.aliexpressImages.map((imageUrl, index) => (
+                        <button
+                          key={index}
+                          type="button"
+                          className={`gallery-thumbnail ${index === activeProduct.selectedImageIndex ? 'is-main' : ''}`}
+                          onClick={() => {
+                            patchProduct(activeProduct.id, {
+                              selectedImageIndex: index,
+                              imageUrl: imageUrl,
+                            } as Partial<ProductDraft>)
+                          }}
+                          aria-label={`Select image ${index + 1} as main product picture`}
+                          title={`Click to set image ${index + 1} as main product picture`}
+                        >
+                          <img src={imageUrl} alt={`Product image ${index + 1}`} loading="lazy" />
+                          {index === activeProduct.selectedImageIndex && <span className="main-badge">Main</span>}
+                        </button>
+                      ))}
+                    </div>
+                  ) : (
+                    <small className="field-hint">
+                      No images found in the gallery. Source page images will appear after you click Retrieve source data.
+                    </small>
+                  )}
+                </section>
+              )}
+
               <div className="editor-header">
                 <div>
                   <div className="eyebrow">ROW {activeProduct.rowNumber}</div>
-                  <h2>Product detail</h2>
                 </div>
                 {renderStatus(activeProduct.enrichmentStatus)}
-              </div>
-
-              {/* ── Global settings: collections ── */}
-              <div className="field-group">
-                <div className="field-group-heading">
-                  <div className="eyebrow">GLOBAL SETTINGS</div>
-                  <span>Applies to checked products on publish</span>
-                </div>
-                <div className="collection-selector">
-                  <label>
-                    <span>Collections</span>
-                    <select
-                      multiple
-                      size={Math.min(Math.max(readiness?.collections?.length ?? 0, 4), 8)}
-                      value={globalCollectionIds}
-                      onChange={(event) => {
-                        const selected = Array.from(event.target.selectedOptions).map((opt) => opt.value)
-                        setGlobalCollectionIds(selected)
-                      }}
-                      disabled={publishing}
-                    >
-                      {(readiness?.collections ?? []).map((collection) => (
-                        <option key={collection.id} value={collection.id}>
-                          {collection.name}
-                        </option>
-                      ))}
-                    </select>
-                  </label>
-                  {globalCollectionIds.length > 0 && (
-                    <button
-                      type="button"
-                      className="text-button"
-                      disabled={publishing}
-                      onClick={() => setGlobalCollectionIds([])}
-                    >
-                      Clear selection
-                    </button>
-                  )}
-                </div>
-                {globalCollectionIds.length > 0 && (
-                  <small className="collection-hint">
-                    {globalCollectionIds.length} collection{globalCollectionIds.length === 1 ? '' : 's'} selected for the next {selectedProducts.length} checked product{selectedProducts.length === 1 ? '' : 's'}.
-                  </small>
-                )}
               </div>
 
               <div className="field-group">
@@ -1625,20 +2054,28 @@ function AppContent() {
                   <div className="eyebrow">SUPPLIER DATA</div>
                   <span>Read-only</span>
                 </div>
-                <div className="field-grid">
-                  {renderReadOnlyTextInput('Product Title', activeProduct.title)}
+                {/* VIC-20 #4: For vican, Product Title spans full width of the pane */}
+                <div className={`field-grid ${activeProduct.supplier === 'vican' ? 'vican-title-full' : ''}`}>
+                  {activeProduct.supplier === 'vican' ? (
+                    <div className="vican-title-full-width">{renderReadOnlyTextInput('Product Title', activeProduct.title)}</div>
+                  ) : (
+                    renderReadOnlyTextInput('Product Title', activeProduct.title)
+                  )}
                   {renderReadOnlyNumberInput('Unit price', activeProduct.unitPrice)}
-                  {renderReadOnlyNumberInput('Case price', activeProduct.casePrice)}
+                  {activeProduct.supplier !== 'vican' && renderReadOnlyNumberInput('Case price', activeProduct.casePrice)}
                   {renderReadOnlyNumberInput(
                     'Supplier stock on hand',
                     activeProduct.stockOnHand ?? null,
                   )}
+                  {/* VIC-17: Cost price (dollars + cents from template columns H + I) — editable for Vican Visions */}
+                  {activeProduct.supplier === 'vican' &&
+                    renderNumberInput('Cost price (H+I)', 'costPrice', activeProduct.costPrice)}
                 </div>
               </div>
 
               <div className="field-group">
                 <div className="field-group-heading">
-                  <div className="eyebrow">APP DATA</div>
+                  <div className="eyebrow">SUGGESTED DATA</div>
                   <span>Editable</span>
                 </div>
                 <div className="field-grid">
@@ -1648,7 +2085,7 @@ function AppContent() {
                     activeProduct.suggestedSalePrice,
                   )}
                   {renderNumberInput(
-                    'Shopify inventory',
+                    'Inventory',
                     'inventoryQuantity',
                     activeProduct.inventoryQuantity,
                   )}
@@ -1670,7 +2107,7 @@ function AppContent() {
                   disabled={
                     busy ||
                     !activeProduct.selected ||
-                    (!activeProduct.sourceUrl && !activeProduct.imageUrl)
+                    !activeProduct.sourceUrl
                   }
                   onClick={() => void handleRetrieve(activeProduct)}
                 >
@@ -1728,60 +2165,6 @@ function AppContent() {
                 <span>Editable</span>
               </div>
 
-              {/* ── Image details ── */}
-              <section className="image-details" aria-label="Retrieved image details">
-                <div className="image-details-heading">
-                  <span>Image details</span>
-                  {renderStatus(activeProduct.imageStatus)}
-                </div>
-                <div className="image-details-body">
-                  <div className="editor-image">
-                    {activeProduct.imageLocalUrl ? (
-                      <img
-                        src={activeProduct.imageLocalUrl}
-                        alt={`Retrieved image for ${activeProduct.title}`}
-                      />
-                    ) : (
-                      <span>
-                        {activeProduct.imageStatus === 'pending'
-                          ? 'Not retrieved'
-                          : 'No saved image'}
-                      </span>
-                    )}
-                  </div>
-                  <dl className="image-meta">
-                    <div>
-                      <dt>Column A source</dt>
-                      <dd>
-                        {activeProduct.imageUrl ? (
-                          <a
-                            href={activeProduct.imageUrl}
-                            target="_blank"
-                            rel="noreferrer"
-                          >
-                            Open image source
-                          </a>
-                        ) : (
-                          'Not provided'
-                        )}
-                      </dd>
-                    </div>
-                    <div>
-                      <dt>Saved file</dt>
-                      <dd>{activeProduct.imageLocalFilename || 'Not retrieved'}</dd>
-                    </div>
-                    <div>
-                      <dt>Retrieval</dt>
-                      <dd>
-                        {activeProduct.imageStatus === 'valid'
-                          ? 'Downloaded to productimage'
-                          : 'Available after source retrieval'}
-                      </dd>
-                    </div>
-                  </dl>
-                </div>
-              </section>
-
               {activeProduct.enrichmentError && (
                 <p className="source-error">Source retrieval: {activeProduct.enrichmentError}</p>
               )}
@@ -1800,7 +2183,9 @@ function AppContent() {
               )}
 
               <div className="detail-fields">
-                {(['brand', 'country', 'region', 'productType', 'abv', 'containerType', 'style'] as const).map(
+                {(['brand', 'country', 'region', 'productType', 'abv', 'containerType', 'style'] as const)
+                  .filter((field) => !(activeProduct.supplier === 'vican' && field === 'abv'))
+                  .map(
                   (field) => (
                     <label
                       className={`field ${field in (dirtyFieldsFor(activeProduct.id) ?? {}) ? 'dirty' : ''}`}
@@ -1828,6 +2213,41 @@ function AppContent() {
                 )}
               </div>
 
+              {/* VIC-17: AliExpress-specific editor sections */}
+              {activeProduct.supplier === 'vican' && (
+                <>
+                  {/* Product Attributes (from AliExpress "Specifications" section) */}
+                  {renderTextInput(
+                    'Product Attributes',
+                    'productAttributes',
+                    activeProduct.productAttributes,
+                    true,
+                  )}
+
+                  {/* Reset AliExpress fields to originally loaded values */}
+                  <div className="field-group">
+                    <div className="field-group-heading">
+                      <div className="eyebrow">RESET</div>
+                      <span>Reverts AliExpress fields to originally retrieved values</span>
+                    </div>
+                    <button
+                      type="button"
+                      className="button button-secondary"
+                      onClick={() => {
+                        patchProduct(activeProduct.id, {
+                          productAttributes: activeProduct.originalProductAttributes,
+                          selectedImageIndex: 0,
+                          imageUrl: activeProduct.imageUrls[0] ?? activeProduct.imageUrl,
+                        } as Partial<ProductDraft>)
+                        showToast('info', 'AliExpress fields reverted to original values.')
+                      }}
+                    >
+                      Reset AliExpress fields
+                    </button>
+                  </div>
+                </>
+              )}
+
               {activeProduct.validationErrors.length > 0 && (
                 <div className="validation-box">
                   <strong>Needs attention</strong>
@@ -1844,10 +2264,108 @@ function AppContent() {
                   Press Save to persist.
                 </div>
               )}
+
+              {/* ── Categories section (bottom) ── */}
+              <div className="detail-section-heading">
+                <div className="eyebrow">CATEGORIES</div>
+                <span>Applies to checked products on publish</span>
+              </div>
+              {/* ── Global settings: Collections (Cellar only; Vican uses WooCommerce categories) ── */}
+              {supplier !== 'vican' && (
+              <div className="field-group">
+                <div className="field-group-heading">
+                  <div className="eyebrow">GLOBAL SETTINGS</div>
+                  <span>Applies to checked products on publish</span>
+                </div>
+                <div className="collection-selector">
+                  <label>
+                    <span>Collections</span>
+                    <select
+                      multiple
+                      size={Math.min(Math.max(readiness?.collections?.length ?? 0, 4), 8)}
+                      value={globalCollectionIds}
+                      onChange={(event) => {
+                        const selected = Array.from(event.target.selectedOptions).map((opt) => opt.value)
+                        setGlobalCollectionIds(selected)
+                      }}
+                      disabled={publishing}
+                    >
+                      {(readiness?.collections ?? []).map((collection) => (
+                        <option key={collection.id} value={collection.id}>
+                          {collection.name}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  {globalCollectionIds.length > 0 && (
+                    <button
+                      type="button"
+                      className="text-button"
+                      disabled={publishing}
+                      onClick={() => setGlobalCollectionIds([])}
+                    >
+                      Clear selection
+                    </button>
+                  )}
+                </div>
+                {globalCollectionIds.length > 0 && (
+                  <small className="collection-hint">
+                    {globalCollectionIds.length} collection{globalCollectionIds.length === 1 ? '' : 's'} selected for the next {selectedProducts.length} checked product{selectedProducts.length === 1 ? '' : 's'}.
+                  </small>
+                )}
+              </div>
+              )}
+
+              {/* VIC-19: WooCommerce categories selector (vican only) */}
+              {supplier === 'vican' && (
+                <div className="field-group">
+                  <div className="field-group-heading">
+                    <div className="eyebrow">GLOBAL SETTINGS</div>
+                    <span>Applies to checked products on publish (WooCommerce categories)</span>
+                  </div>
+                  <div className="collection-selector">
+                    <label>
+                      <span>Categories</span>
+                      <select
+                        multiple
+                        size={Math.min(Math.max(readiness?.wooCategories?.length ?? 0, 4), 8)}
+                        value={globalCategoryIds}
+                        onChange={(event) => {
+                          const selected = Array.from(event.target.selectedOptions).map((opt) => opt.value)
+                          setGlobalCategoryIds(selected)
+                        }}
+                        disabled={publishing}
+                      >
+                        {(readiness?.wooCategories ?? []).map((category) => (
+                          <option key={category.id} value={category.id}>
+                            {category.name}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                    {globalCategoryIds.length > 0 && (
+                      <button
+                        type="button"
+                        className="text-button"
+                        disabled={publishing}
+                        onClick={() => setGlobalCategoryIds([])}
+                      >
+                        Clear selection
+                      </button>
+                    )}
+                  </div>
+                  {globalCategoryIds.length > 0 && (
+                    <small className="collection-hint">
+                      {globalCategoryIds.length} category{globalCategoryIds.length === 1 ? '' : 's'} selected for the next {selectedProducts.length} checked product{selectedProducts.length === 1 ? '' : 's'}.
+                    </small>
+                  )}
+                </div>
+              )}
             </>
           ) : (
             <div className="empty-state">Choose a product to edit.</div>
           )}
+        </div>
         </aside>
       </section>
 
@@ -1986,6 +2504,88 @@ function AppContent() {
         </section>
       )}
 
+      {/* ── Products load panel (VIC-16: partial/failed retrieval log) ── */}
+      {productsLoadOpen && (
+        <section className="issues-log" aria-labelledby="products-load-title">
+          <div className="issues-heading">
+            <div>
+              <div className="eyebrow">PRODUCTS LOAD / LOG FILE</div>
+              <h2 id="products-load-title">
+                {productsLoadLoading
+                  ? 'Loading products load log...'
+                  : productsLoadEntries.length
+                    ? `${productsLoadEntries.length.toLocaleString()} product${productsLoadEntries.length === 1 ? '' : 's'} with partial/failed retrieval`
+                    : 'No partial or failed retrievals found'}
+              </h2>
+            </div>
+            <div className="issues-actions">
+              <span>logs/productsload.log</span>
+              <button
+                type="button"
+                className="text-button"
+                disabled={productsLoadLoading}
+                onClick={() => void handleShowProductsLoad()}
+              >
+                Refresh log
+              </button>
+            </div>
+          </div>
+
+          {productsLoadLoading && (
+            <p className="issue-overflow">Reading products load entries for this draft.</p>
+          )}
+
+          {!productsLoadLoading && productsLoadEntries.length > 0 && (
+            <div className="issue-list">
+              {productsLoadEntries.map((entry) => {
+                const product = draft?.products.find((p) => p.id === entry.productId) ?? null
+                return (
+                  <article className="issue-entry" key={`${entry.timestamp}-${entry.productId}`}>
+                    {product ? (
+                      <button
+                        type="button"
+                        className="issue-product"
+                        onClick={() => {
+                          setActiveProductId(product.id)
+                          setProductsLoadOpen(false)
+                        }}
+                      >
+                        <strong>{product.title || 'Untitled product'}</strong>
+                        <small>
+                          Row {product.rowNumber} / Fields: {entry.fieldsLoaded.length} loaded, {entry.fieldsFailed.length} failed
+                        </small>
+                      </button>
+                    ) : (
+                      <div className="issue-product">
+                        <strong>{entry.title || 'Unknown product'}</strong>
+                        <small>{new Date(entry.timestamp).toLocaleString()}</small>
+                      </div>
+                    )}
+                    <div className="issue-details">
+                      <p>
+                        <strong>Loaded:</strong> {entry.fieldsLoaded.length ? entry.fieldsLoaded.join(', ') : 'none'}
+                      </p>
+                      <p>
+                        <strong>Failed:</strong> {entry.fieldsFailed.length ? entry.fieldsFailed.join(', ') : 'none'}
+                      </p>
+                      {entry.error && (
+                        <p>
+                          <strong>Error:</strong> {entry.error}
+                        </p>
+                      )}
+                    </div>
+                  </article>
+                )
+              })}
+            </div>
+          )}
+
+          {!productsLoadLoading && productsLoadEntries.length === 0 && (
+            <p className="issue-overflow">No products with partial or failed retrieval found.</p>
+          )}
+        </section>
+      )}
+
       {/* ── Import errors ── */}
       {importErrors.length > 0 && (
         <details className="import-errors">
@@ -2016,8 +2616,9 @@ function AppContent() {
               {validSelectedProducts.length === 1 ? '' : 's'}?
             </h2>
             <p>
-              Suggested sale price and Shopify inventory will be sent to the
-              configured Shopify location.
+              {supplier === 'vican'
+                ? 'Suggested sale price, all images, description, attributes, and categories will be sent to your WooCommerce store.'
+                : 'Suggested sale price and Shopify inventory will be sent to the configured Shopify location.'}
             </p>
             <div className="review-list">
               {validSelectedProducts.slice(0, 8).map((product) => (

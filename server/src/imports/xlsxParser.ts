@@ -44,7 +44,7 @@ const rawColumns = (row: unknown[], headers: string[]): Record<string, unknown> 
     row.map((value, index) => [headers[index] || `Column ${index + 1}`, value]),
   );
 
-export const parseWorkbook = (buffer: Buffer, draftId: string): ParsedWorkbook => {
+export const parseWorkbook = (buffer: Buffer, draftId: string, supplier: string = 'cellar'): ParsedWorkbook => {
   const workbook = XLSX.read(buffer, { type: 'buffer', cellDates: true });
   const sheetName = workbook.SheetNames[0];
   if (!sheetName) throw new Error('The workbook does not contain a worksheet.');
@@ -62,19 +62,35 @@ export const parseWorkbook = (buffer: Buffer, draftId: string): ParsedWorkbook =
   let invalidRowCount = 0;
   let duplicateRowsSkipped = 0;
 
+  const isAliExpress = supplier === 'aliexpress' || supplier === 'vican';
+
   const keyRows = new Map<string, Array<{ rowNumber: number; fingerprint: string }>>();
   rows.slice(1).forEach((row, rowIndex) => {
     const rowNumber = rowIndex + 2;
-    const key = textValue(valueAt(row, StandardCol.KEY));
+    // For AliExpress, derive key from source URL (column A → StandardCol.SOURCE_URL)
+    const key = isAliExpress
+      ? textValue(valueAt(row, StandardCol.SOURCE_URL))
+      : textValue(valueAt(row, StandardCol.KEY));
     const normalizedKey = normalizeSupplierProductKey(key);
     if (normalizedKey) keyRows.set(normalizedKey, [...(keyRows.get(normalizedKey) ?? []), { rowNumber, fingerprint: JSON.stringify([row[StandardCol.IMAGE_1], row[StandardCol.KEY], row[StandardCol.TITLE], row[StandardCol.SOURCE_URL], row[StandardCol.SOH], row[StandardCol.CASE_PRICE], row[StandardCol.UNIT_PRICE], row[StandardCol.SUPPLIER_TYPE]]) }]);
   });
 
   rows.slice(1).forEach((row, rowIndex) => {
     const rowNumber = rowIndex + 2;
-    const supplierProductKey = textValue(valueAt(row, StandardCol.KEY));
+    const supplierProductKey = isAliExpress
+      ? textValue(valueAt(row, StandardCol.SOURCE_URL))
+      : textValue(valueAt(row, StandardCol.KEY));
     const normalizedKey = normalizeSupplierProductKey(supplierProductKey);
     const imageUrl = textValue(valueAt(row, StandardCol.IMAGE_1));
+    const aliexpressImages = isAliExpress
+      ? [
+          textValue(valueAt(row, StandardCol.IMAGE_1)),
+          textValue(valueAt(row, StandardCol.IMAGE_2)),
+          textValue(valueAt(row, StandardCol.IMAGE_3)),
+          textValue(valueAt(row, StandardCol.IMAGE_4)),
+          textValue(valueAt(row, StandardCol.IMAGE_5)),
+        ].filter(Boolean)
+      : [];
     const title = textValue(valueAt(row, StandardCol.TITLE));
     const sourceUrl = textValue(valueAt(row, StandardCol.SOURCE_URL));
     const stockOnHand = numericValue(valueAt(row, StandardCol.SOH));
@@ -82,11 +98,18 @@ export const parseWorkbook = (buffer: Buffer, draftId: string): ParsedWorkbook =
     const casePrice = numericValue(valueAt(row, StandardCol.CASE_PRICE));
     const unitPriceText = textValue(valueAt(row, StandardCol.UNIT_PRICE));
     const unitPrice = numericValue(valueAt(row, StandardCol.UNIT_PRICE));
+    // VIC-17: AliExpress cost price from column H (dollars) + I (cents)
+    const costPriceDollars = numericValue(valueAt(row, StandardCol.COST_DOLLARS));
+    const costPriceCents = numericValue(valueAt(row, StandardCol.COST_CENTS));
+    const costPrice = costPriceDollars !== null && costPriceCents !== null
+      ? currencyValue(costPriceDollars + costPriceCents / 100)
+      : null;
     const validationErrors: string[] = [];
 
     const hasContent = row.some((value) => textValue(value) !== '');
     if (!hasContent) return;
-    if (!supplierProductKey) validationErrors.push('Supplier product key is missing (column J).');
+    // For AliExpress, key is derived from URL — no validation needed
+    if (!isAliExpress && !supplierProductKey) validationErrors.push('Supplier product key is missing (column J).');
     const duplicateEntries = keyRows.get(normalizedKey) ?? [];
     const duplicateRows = duplicateEntries.map((entry) => entry.rowNumber);
     const hasConflictingDuplicate = new Set(duplicateEntries.map((entry) => entry.fingerprint)).size > 1;
@@ -98,7 +121,7 @@ export const parseWorkbook = (buffer: Buffer, draftId: string): ParsedWorkbook =
     if (casePrice === null && textValue(valueAt(row, StandardCol.CASE_PRICE))) validationErrors.push('Case price is not numeric (column N).');
     if (imageUrl && !isValidUrl(imageUrl)) validationErrors.push('Image URL must be a valid HTTPS URL (column A).');
 
-    if (!supplierProductKey || (duplicateEntries.length > 1 && hasConflictingDuplicate)) {
+    if ((!isAliExpress && !supplierProductKey) || (duplicateEntries.length > 1 && hasConflictingDuplicate)) {
       invalidRowCount += 1;
       importErrors.push(`Row ${rowNumber}: ${validationErrors.join(' ')}`);
       return;
@@ -115,7 +138,7 @@ export const parseWorkbook = (buffer: Buffer, draftId: string): ParsedWorkbook =
       rowNumber,
       supplierProductKey,
       imageUrl,
-      imageUrls: imageUrl ? [imageUrl] : [],
+      imageUrls: aliexpressImages.length > 0 ? aliexpressImages : (imageUrl ? [imageUrl] : []),
       imageLocalFilename: '',
       imageLocalUrl: '',
       imageStatus: imageUrl ? 'pending' : 'not-provided',
@@ -153,10 +176,12 @@ export const parseWorkbook = (buffer: Buffer, draftId: string): ParsedWorkbook =
       failedEnrichmentFields: [],
       productAttributes: '',
       productDescription: '',
-      aliexpressImages: [],
+      aliexpressImages,
       originalProductAttributes: '',
       originalProductDescription: '',
-      supplier: 'cellar',
+      selectedImageIndex: 0,
+      costPrice,
+      supplier,
     });
 
     if (validationErrors.length > 0) {

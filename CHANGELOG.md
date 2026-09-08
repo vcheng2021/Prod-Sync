@@ -1,5 +1,45 @@
 # eComInt Change History
 
+## 2026-09-09 — VIC-22, UI refinements
+
+### JIRA VIC-22 — Supplier-aware draft restoration on supplier switch
+
+- When switching suppliers via the Apply button, the app now queries the server for the most recently updated draft matching the new supplier (via `GET /api/drafts/current?supplier=<supplier>`).
+- If a saved draft exists for the new supplier, it is restored immediately instead of falling back to the upload/landing page.
+- If no matching draft exists, the app clears transient state as before.
+- Added `getCurrentDraftBySupplier(userId, supplier)` to `DraftStore` — queries drafts joined with products filtered by supplier, ordered by `updated_at DESC`.
+- Added optional `?supplier=` query parameter to the `/api/drafts/current` server endpoint.
+- Added `getCurrentDraftBySupplier(supplier)` to `client/src/api.ts`.
+- Added `handleSupplierSwitch(newSupplier)` to `App.tsx` to orchestrate the client-side restore/clear logic.
+- Updated `docs/ARCHITECTURE.md` §3 (client) and §5 (API contract) to document the supplier-aware current draft endpoint.
+
+### UI: Product list row layout refinements
+
+- Changed `.product-list-row` and `.list-header-row` `align-items` from `center` to `start` so all row content is top-justified.
+- Added `align-self: center` to `.check-cell` (both header and data row checkbox cells) to keep checkboxes vertically centered while other content stays top-aligned.
+- Made `.list-cell.product-cell` a flex container with `align-items: flex-start` and `gap: 10px` so the thumbnail sits to the left of the title rather than above it.
+- Added `align-self: center` to `.thumb` to vertically center the product image within the product-cell.
+- Updated `docs/ARCHITECTURE.md` §3 (client) to document the product list row layout.
+
+### UI: Detail pane freeze-at-top
+
+- `.detail-pane` now uses `position: sticky; top: 0` with `height: calc(100dvh - 74px)` and `overflow-y: auto` so the detail pane stays pinned at the top of the browser window while scrolling the product list, with its own internal scrollbar for tall content.
+- `.detail-pane-container` uses `height: 100%` without overflow restrictions to allow the sticky behavior to work relative to the viewport.
+- Updated `docs/ARCHITECTURE.md` §3 (client) to document the sticky detail pane behavior.
+
+### UI: Removed "Details" heading from detail pane
+
+- Removed the `<h2>Details</h2>` heading from the `.editor-header` in the detail pane.
+
+### UI: Vican title click opens in popup browser
+
+- For vican (AliExpress) products, clicking the product title link now opens the source URL in the same named popup browser window (`ecomint-brower`, 1200×800) used by the Browse/Open buttons, instead of opening a new browser tab.
+- Cellar products unchanged — their title links still open in a new tab via `target="_blank"`.
+
+### UI: Always-on-top popup browser for product source
+
+- Added `alwaysOnTop=yes` to the `window.open()` feature string for the popup browser window on all product source links (title click, Browse, and Open buttons) so the source page stays on top of other windows.
+
 ## 2026-09-02 — VIC-10
 
 ### JIRA VIC-10 — Data Refresh and load options

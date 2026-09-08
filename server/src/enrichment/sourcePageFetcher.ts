@@ -2,7 +2,7 @@ import dns from 'node:dns/promises';
 import net from 'node:net';
 import { config } from '../config.js';
 import type { EnrichedProductDetails, FetchResult } from '../types.js';
-import { extractProductDetails, extractSupplierProductDetails, type SupplierProductPayload } from './productDetailsExtractor.js';
+import { extractProductDetails, extractAliexpressProductDetails, extractSupplierProductDetails, type SupplierProductPayload } from './productDetailsExtractor.js';
 import { plainTextToHtml } from './htmlSanitizer.js';
 
 const emptyDetails = (): EnrichedProductDetails => ({
@@ -136,7 +136,7 @@ const fetchSupplierProduct = async (sourceUrl: URL): Promise<EnrichedProductDeta
   return product ? extractSupplierProductDetails(product) : null;
 };
 
-export const fetchProductDetails = async (rawUrl: string): Promise<FetchResult> => {
+export const fetchProductDetails = async (rawUrl: string, supplier?: string): Promise<FetchResult> => {
   try {
     let url = await validateUrl(rawUrl);
     const [supplierDetails, supplierDescription] = await Promise.all([
@@ -179,7 +179,39 @@ export const fetchProductDetails = async (rawUrl: string): Promise<FetchResult> 
           failedFields.push(field);
         }
       }
-      const hasProductData = Object.values(details).some((value) => value.trim().length > 0);
+      // VIC-17: AliExpress-specific extraction.
+      // Detect AliExpress both by URL hostname AND by supplier field (Issue 8:
+      // some vican source URLs may not match the .aliexpress.com pattern, e.g.
+      // redirected or aliased product links).
+      const isAliExpressUrl = url.hostname === 'www.aliexpress.com' || url.hostname === 'aliexpress.com' || url.hostname.endsWith('.aliexpress.com');
+      const isAliExpressSupplier = supplier === 'aliexpress' || supplier === 'vican';
+      const isAliExpress = isAliExpressUrl || isAliExpressSupplier;
+      if (isAliExpress) {
+        const aliexpressDetails = extractAliexpressProductDetails(html);
+        if (aliexpressDetails.images.length > 0) {
+          details.aliexpressImages = aliexpressDetails.images;
+          partialDetails.aliexpressImages = aliexpressDetails.images;
+        }
+        if (aliexpressDetails.descriptionHtml.trim().length > 0) {
+          details.productDescription = aliexpressDetails.descriptionHtml;
+          // For AliExpress, use the extracted description as descriptionHtml fallback
+          // so the standard Description textarea is also populated.
+          if (!details.descriptionHtml) details.descriptionHtml = aliexpressDetails.descriptionHtml;
+          if (!partialDetails.descriptionHtml) partialDetails.descriptionHtml = aliexpressDetails.descriptionHtml;
+          partialDetails.productDescription = aliexpressDetails.descriptionHtml;
+        } else {
+          failedFields.push('productDescription');
+        }
+        if (aliexpressDetails.attributesHtml.trim().length > 0 || Object.keys(aliexpressDetails.attributeFields).length > 0) {
+          details.productAttributes = aliexpressDetails.attributesHtml || Object.entries(aliexpressDetails.attributeFields)
+            .map(([k, v]) => `${k}: ${v}`)
+            .join('\n');
+          partialDetails.productAttributes = details.productAttributes;
+        } else {
+          failedFields.push('productAttributes');
+        }
+      }
+      const hasProductData = Object.values(details).some((value) => typeof value === 'string' ? value.trim().length > 0 : Array.isArray(value) && value.length > 0);
       if (!hasProductData) throw new Error('No product-specific data was found at the source URL.');
       return {
         status: 'ready',

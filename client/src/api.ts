@@ -8,6 +8,7 @@ export interface ProductDraft {
   rowNumber: number;
   supplierProductKey: string;
   imageUrl: string;
+  imageUrls: string[];
   imageLocalFilename: string;
   imageLocalUrl: string;
   imageStatus: ImageStatus;
@@ -24,22 +25,37 @@ export interface ProductDraft {
   region: string;
   productType: string;
   supplierType: string;
+  sourcePlatform: string;
   abv: string;
   containerType: string;
   style: string;
   enrichmentStatus: EnrichmentStatus;
   enrichmentError: string;
   enrichmentFetchedAt: string | null;
+  enrichmentPartial: boolean;
+  failedEnrichmentFields: string[];
   selected: boolean;
   publishStatus: PublishStatus;
   publishError: string;
   shopifyProductId: string | null;
   shopifyMatchCount: number | null;
-  validationErrors: string[];
-  raw: Record<string, unknown>;
+  // VIC-17: AliExpress-specific fields
+  productAttributes: string;
+  productDescription: string;
+  aliexpressImages: string[];
+  originalProductAttributes: string;
+  originalProductDescription: string;
+  selectedImageIndex: number;
+  costPrice: number | null;
+  // VIC-18: supplier routing
+  supplier: string;
+  // UI state
   featured: boolean;
   publishToOnlineStore: boolean;
   selectedCollectionIds: string[];
+  // Import validation
+  validationErrors: string[];
+  raw: Record<string, unknown>;
 }
 
 export interface DraftResponse {
@@ -52,6 +68,7 @@ export interface DraftResponse {
     selectedProducts: number;
     readyProducts: number;
     failedProducts: number;
+    supplier: string;
   };
   products: ProductDraft[];
 }
@@ -85,13 +102,18 @@ const requestJson = async <T>(input: RequestInfo | URL, init?: RequestInit): Pro
   return response.json() as Promise<T>;
 };
 
-export const importWorkbook = async (file: File): Promise<ImportResponse> => {
+export const importWorkbook = async (file: File, supplier?: string): Promise<ImportResponse> => {
   const form = new FormData();
   form.append('workbook', file);
+  if (supplier) form.append('supplier', supplier);
   return requestJson<ImportResponse>('/api/imports', { method: 'POST', body: form });
 };
 
 export const getCurrentDraft = (): Promise<DraftResponse | null> => requestJson<DraftResponse | null>('/api/drafts/current');
+
+// VIC-22: Fetch the most recent draft filtered by supplier
+export const getCurrentDraftBySupplier = (supplier: string): Promise<DraftResponse | null> =>
+  requestJson<DraftResponse | null>(`/api/drafts/current?supplier=${encodeURIComponent(supplier)}`);
 
 export const getIssueLog = (draftId?: string): Promise<LogIssue[]> => requestJson<LogIssue[]>(draftId ? `/api/issues?draftId=${encodeURIComponent(draftId)}` : '/api/issues');
 
@@ -124,11 +146,16 @@ export const refreshProduct = (draftId: string, productId: string): Promise<Prod
 export const retrieveProduct = (draftId: string, productId: string): Promise<ProductDraft> =>
   requestJson<ProductDraft>(`/api/drafts/${draftId}/products/${productId}/retrieve`, { method: 'POST' });
 
-export const publishProducts = (draftId: string, productIds: string[], changes: Array<{ id: string; changes: Partial<ProductDraft> }> = [], globalCollectionIds: string[] = []): Promise<{ results: Array<{ productId: string; status: PublishStatus; error: string }>; draft: DraftResponse }> =>
+// VIC-20 Issue 7: Image download is a separate explicit action, not bundled
+// with source page retrieval.
+export const downloadProductImage = (draftId: string, productId: string): Promise<ProductDraft> =>
+  requestJson<ProductDraft>(`/api/drafts/${draftId}/products/${productId}/images`, { method: 'POST' });
+
+export const publishProducts = (draftId: string, productIds: string[], changes: Array<{ id: string; changes: Partial<ProductDraft> }> = [], globalCollectionIds: string[] = [], globalCategoryIds: string[] = []): Promise<{ results: Array<{ productId: string; status: PublishStatus; error: string }>; draft: DraftResponse }> =>
   requestJson(`/api/drafts/${draftId}/publish`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ confirmed: true, productIds, changes, globalCollectionIds }),
+    body: JSON.stringify({ confirmed: true, productIds, changes, globalCollectionIds, globalCategoryIds }),
   });
 
 export const exportDraftUrl = (draftId: string): string => `/api/drafts/${draftId}/export`;
@@ -138,6 +165,21 @@ export interface CollectionOption {
   id: string;
 }
 
+export interface ProductsLoadEntry {
+  timestamp: string;
+  productId: string;
+  supplierProductKey: string;
+  title: string;
+  sourceUrl: string;
+  fieldsLoaded: string[];
+  fieldsFailed: string[];
+  error: string;
+  draftId: string;
+}
+
+export const getProductsLoad = (draftId?: string): Promise<ProductsLoadEntry[]> =>
+  requestJson<ProductsLoadEntry[]>(draftId ? `/api/productsload?draftId=${encodeURIComponent(draftId)}` : '/api/productsload');
+
 export interface ReadinessStatus {
   ok: boolean;
   version: string;
@@ -145,6 +187,10 @@ export interface ReadinessStatus {
   storeDomain: string;
   missing: string[];
   collections: CollectionOption[];
+  wooCategories: CollectionOption[];
+  wooConfigured: boolean;
+  wooStoreUrl: string;
+  wooMissing: string[];
 }
 
 export const getReadiness = (): Promise<ReadinessStatus> =>

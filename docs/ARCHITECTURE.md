@@ -45,6 +45,7 @@ The browser never receives the Shopify Admin token. All supplier network request
 - starts explicit source/image retrieval for checked rows;
 - clears all checked items across the full catalog via a toolbar button;
 - loads new or updated product data from an .xlsx workbook via the **Load workbook** toolbar button without resetting the page;
+- switches suppliers with supplier-aware draft restoration: when switching suppliers, the app queries the server for the most recently updated draft matching the new supplier and restores it if one exists, otherwise falls back to the upload/landing page;
 - shows publish review and confirmation;
 - opens current-draft failure records from the physical log through the Posting issues metric;
 - resets the visible workspace through Reset page without deleting persisted catalog data;
@@ -54,7 +55,7 @@ The browser never receives the Shopify Admin token. All supplier network request
 
 ### 3.1 Client layout
 
-The client uses a single-file `App.tsx` with styling in `workspace.css`. The workspace shell is a flex column that fills the viewport (`min-height: 100svh`). Below the brand bar, workspace heading, toolbar, and filter bar, the `.workspace-grid` grows to fill all remaining vertical space (`flex: 1 1 auto`). Both the product table panel and the product details editor panel are set to `height: 100%` and use `display: flex; flex-direction: column`, so each expands dynamically to the browser height. The table content scrolls internally within `.table-wrap` (with sticky column headers preserved); the editor panel scrolls vertically. On screens narrower than 1050 px the grid collapses to a single column and both panels return to natural height so the page scrolls normally. The application background uses a warm cellar-shop palette with amber radial lighting glows in both light and dark themes.
+The client uses a single-file `App.tsx` with styling in `workspace.css`. The workspace shell is a flex column that fills the viewport (`min-height: 100svh`). Below the brand bar, workspace heading, toolbar, and filter bar, the `.workspace-grid` grows to fill all remaining vertical space (`flex: 1 1 auto`). Both the product table panel and the product details editor panel are set to `height: 100%` and use `display: flex; flex-direction: column`, so each expands dynamically to the browser height. The table content scrolls internally within `.list-wrap` (with a shared grid template between header and rows for column alignment); the detail pane uses `position: sticky; top: 0` with `height: calc(100dvh - 74px)` and `overflow-y: auto` so it stays pinned at the top of the browser window while scrolling the product list, with its own internal scrollbar for tall content. Product list rows use top-justified content (`.list-header-row` and `.product-list-row` use `align-items: start`), with checkboxes vertically centered via `.check-cell { align-self: center }` and the product thumbnail left of the title via `.thumb { align-self: center }` inside a flex `.product-cell`. On screens narrower than 1050 px the grid collapses to a single column and both panels return to natural height so the page scrolls normally. The application background uses a warm cellar-shop palette with amber radial lighting glows in both light and dark themes.
 
 ### Server
 
@@ -143,7 +144,7 @@ Returns a lightweight health response and does not call Shopify. Docker uses thi
 
 ### `GET /api/drafts/current`
 
-Returns the current `DraftResponse`, or `null` when the catalog is empty.
+Returns the current `DraftResponse`, or `null` when the catalog is empty. Accepts an optional `?supplier=<supplier>` query parameter; when present, the server returns the most recently updated draft containing products matching the given supplier (using a `JOIN` on the `products.supplier` column), or `null` if no matching draft exists.
 
 ### `GET /api/issues?draftId=<id>`
 

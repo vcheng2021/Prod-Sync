@@ -85,6 +85,8 @@ export class ShopifyClient implements PlatformClient {
       aliexpressImages: [],
       originalProductAttributes: '',
       originalProductDescription: '',
+      selectedImageIndex: 0,
+      costPrice: null,
       supplier: 'cellar',
       selected: true,
       publishStatus: 'pending',

@@ -2,7 +2,9 @@ import { Router } from 'express';
 import type { DraftStore } from '../drafts/draftStore.js';
 import { createDraftWorkbook } from '../exports/excelExporter.js';
 import { AppLogger } from '../logging/logger.js';
+import { config } from '../config.js';
 import { publishProduct } from '../shopify/productPublisher.js';
+import { publishToWooCommerce } from '../platforms/woocommercePublisher.js';
 import type { ProductDraft } from '../types.js';
 
 export const createPublishingRouter = (store: DraftStore, logger: AppLogger): Router => {
@@ -32,6 +34,10 @@ export const createPublishingRouter = (store: DraftStore, logger: AppLogger): Ro
       if (globalCollectionIds !== undefined && (!Array.isArray(globalCollectionIds) || globalCollectionIds.some((entry) => typeof entry !== 'string'))) {
         return response.status(400).json({ error: 'Expected globalCollectionIds to be an array of strings.' });
       }
+      const globalCategoryIds = request.body?.globalCategoryIds ?? config.wooCategories.map((category) => category.id);
+      if (globalCategoryIds !== undefined && (!Array.isArray(globalCategoryIds) || globalCategoryIds.some((entry) => typeof entry !== 'string'))) {
+        return response.status(400).json({ error: 'Expected globalCategoryIds to be an array of strings.' });
+      }
       if (changes?.length) store.updateProducts(request.params.draftId, request.userId!, changes as Array<{ id: string; changes: Partial<ProductDraft> }>);
       const draft = store.getDraft(request.params.draftId, request.userId!);
       const requestedIds = Array.isArray(request.body.productIds) ? new Set(request.body.productIds as string[]) : null;
@@ -45,9 +51,12 @@ export const createPublishingRouter = (store: DraftStore, logger: AppLogger): Ro
             ? { ...product, selectedCollectionIds: globalCollectionIds }
             : product;
         store.savePublishResult(request.params.draftId, request.userId!, product.id, 'publishing', null, '');
-        const result = await publishProduct(publishProductInput);
-        store.savePublishResult(request.params.draftId, request.userId!, product.id, result.status, result.shopifyProductId, result.error);
-        logger.writePublishEvent('product.publish', { draftId: request.params.draftId, productId: product.id, outcome: result.status === 'published' ? 'success' : 'failure', status: result.status, action: result.action, matchCount: result.matchCount, error: result.error });
+        const result = product.supplier === 'aliexpress' || product.supplier === 'vican'
+          ? await publishToWooCommerce(publishProductInput, globalCategoryIds as string[] | undefined)
+          : await publishProduct(publishProductInput);
+        const platformId = result.shopifyProductId;
+        store.savePublishResult(request.params.draftId, request.userId!, product.id, result.status, platformId, result.error);
+        logger.writePublishEvent('product.publish', { draftId: request.params.draftId, productId: product.id, platform: product.supplier, outcome: result.status === 'published' ? 'success' : 'failure', status: result.status, action: result.action, matchCount: result.matchCount, error: result.error });
         results.push({ productId: product.id, ...result });
       }
       return response.json({ results, draft: store.getDraft(request.params.draftId, request.userId!) });

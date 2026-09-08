@@ -1,17 +1,17 @@
 import * as XLSX from 'xlsx';
 import { detectSupplier, SUPPLIER_MAPPINGS, type SupplierMapping } from './supplierConfig.js';
-import { STANDARD_HEADERS, type StandardColumn } from './standardFormat.js';
+import { STANDARD_HEADERS, StandardCol, type StandardColumn } from './standardFormat.js';
 
 interface StandardRow {
-  /** All 16 standard columns as strings. */
+  /** All columns as strings. */
   values: string[];
   /** Native row index (for error messages). */
   nativeRowIndex: number;
 }
 
 /** Detect supplier type and get its mapping from workbook headers. */
-function getSupplierMapping(headers: string[]): { mapping: SupplierMapping; supplier: string } {
-  const supplier = detectSupplier(headers);
+function getSupplierMapping(headers: string[], forceSupplier?: string): { mapping: SupplierMapping; supplier: string } {
+  const supplier = forceSupplier ?? detectSupplier(headers);
   const mapping = SUPPLIER_MAPPINGS[supplier] ?? SUPPLIER_MAPPINGS.cellar;
   return { mapping, supplier };
 }
@@ -28,20 +28,20 @@ function reconstructUnitPrice(row: unknown[], mapping: SupplierMapping): string 
   if (mapping.priceReconstruction !== 'from-fragmented') {
     return nativeValue(row, mapping.unitPriceColumn);
   }
-  // AliExpress fragments price across K/L/M: e.g. "US $12.34", "US $15.67", "12 - 15 pcs"
-  // Try to find the first numeric price value in columns K, L, M
-  for (const col of [10, 11, 12]) {
-    if (col < row.length && row[col] !== null && row[col] !== undefined) {
-      const text = String(row[col]).trim();
-      const match = text.match(/\d+\.?\d*/);
-      if (match) return match[0];
-    }
-  }
-  return '';
+  // AliExpress fragments price across K/L/M: e.g. K="71", L=".", M="19" → "71.19"
+  // Or K="2", L=",", M="256" → "2,256" (thousands separator)
+  const priceText = [10, 11, 12]
+    .map((col) => (col < row.length && row[col] !== null && row[col] !== undefined) ? String(row[col]).trim() : '')
+    .join('');
+  return priceText;
 }
 
-/** Transform a native workbook into the standard 16-column format. */
-export function transformToStandard(buffer: Buffer): { headers: string[]; rows: StandardRow[]; supplier: string } {
+/** Transform a native workbook into the standard column format.
+ *
+ * If `forceSupplier` is provided, it overrides the auto-detected supplier and
+ * uses the corresponding column mapping (VIC-18 supplier selection override).
+ */
+export function transformToStandard(buffer: Buffer, forceSupplier?: string): { headers: string[]; rows: StandardRow[]; supplier: string } {
   const headersMutable = [...STANDARD_HEADERS];
   const workbook = XLSX.read(buffer, { type: 'buffer', cellDates: true });
   const sheetName = workbook.SheetNames[0];
@@ -64,7 +64,7 @@ export function transformToStandard(buffer: Buffer): { headers: string[]; rows: 
     return text || `Column ${headerRow.indexOf(value) + 1}`;
   });
 
-  const { mapping, supplier } = getSupplierMapping(headers);
+  const { mapping, supplier } = getSupplierMapping(headers, forceSupplier);
 
   const standardRows: StandardRow[] = [];
 
@@ -74,7 +74,7 @@ export function transformToStandard(buffer: Buffer): { headers: string[]; rows: 
       return;
     }
 
-    const standardValues: string[] = new Array(16).fill('');
+    const standardValues: string[] = new Array(STANDARD_HEADERS.length).fill('');
 
     // Images: map native image columns to standard image columns
     for (let i = 0; i < 8; i++) {
@@ -86,55 +86,61 @@ export function transformToStandard(buffer: Buffer): { headers: string[]; rows: 
 
     // Source platform
     if (mapping.sourceColumn !== null) {
-      standardValues[8] = nativeValue(nativeRow, mapping.sourceColumn);
+      standardValues[StandardCol.SOURCE] = nativeValue(nativeRow, mapping.sourceColumn);
     } else {
-      standardValues[8] = supplier;
+      standardValues[StandardCol.SOURCE] = supplier;
     }
 
     // Supplier product key
     if (mapping.keyColumn !== null) {
-      standardValues[9] = nativeValue(nativeRow, mapping.keyColumn);
+      standardValues[StandardCol.KEY] = nativeValue(nativeRow, mapping.keyColumn);
     }
 
     // Title
     if (mapping.titleColumn !== null) {
-      standardValues[10] = nativeValue(nativeRow, mapping.titleColumn);
+      standardValues[StandardCol.TITLE] = nativeValue(nativeRow, mapping.titleColumn);
     }
-    // For AliExpress, title is typically in columns I/J (8/9) — extract from native row
-    if (supplier === 'aliexpress' && standardValues[10] === '') {
-      const aliTitle = nativeValue(nativeRow, 8) || nativeValue(nativeRow, 9);
-      if (aliTitle) standardValues[10] = aliTitle;
+    // For AliExpress, title is in column J (native index 9)
+    if ((supplier === 'aliexpress' || supplier === 'vican') && standardValues[StandardCol.TITLE] === '') {
+      const aliTitle = nativeValue(nativeRow, 9);
+      if (aliTitle) standardValues[StandardCol.TITLE] = aliTitle;
     }
 
     // Source URL
     if (mapping.sourceUrlColumn !== null) {
-      standardValues[11] = nativeValue(nativeRow, mapping.sourceUrlColumn);
+      standardValues[StandardCol.SOURCE_URL] = nativeValue(nativeRow, mapping.sourceUrlColumn);
     }
     // For AliExpress, source URL is in column A (product URL)
-    if (supplier === 'aliexpress' && standardValues[11] === '') {
-      standardValues[11] = nativeValue(nativeRow, 0);
+    if ((supplier === 'aliexpress' || supplier === 'vican') && standardValues[StandardCol.SOURCE_URL] === '') {
+      standardValues[StandardCol.SOURCE_URL] = nativeValue(nativeRow, 0);
     }
 
     // SOH
     if (mapping.sohColumn !== null) {
-      standardValues[12] = nativeValue(nativeRow, mapping.sohColumn);
+      standardValues[StandardCol.SOH] = nativeValue(nativeRow, mapping.sohColumn);
     }
 
     // Case price
     if (mapping.casePriceColumn !== null) {
-      standardValues[13] = nativeValue(nativeRow, mapping.casePriceColumn);
+      standardValues[StandardCol.CASE_PRICE] = nativeValue(nativeRow, mapping.casePriceColumn);
     }
 
     // Unit price
-    standardValues[14] = reconstructUnitPrice(nativeRow, mapping);
+    standardValues[StandardCol.UNIT_PRICE] = reconstructUnitPrice(nativeRow, mapping);
 
     // Supplier type
     if (mapping.typeColumn !== null) {
-      standardValues[15] = nativeValue(nativeRow, mapping.typeColumn);
-    } else if (supplier === 'aliexpress') {
-      standardValues[15] = 'AliExpress';
+      standardValues[StandardCol.SUPPLIER_TYPE] = nativeValue(nativeRow, mapping.typeColumn);
+    } else if (supplier === 'aliexpress' || supplier === 'vican') {
+      standardValues[StandardCol.SUPPLIER_TYPE] = 'AliExpress';
     } else if (supplier === 'paramount') {
-      standardValues[15] = 'Paramount';
+      standardValues[StandardCol.SUPPLIER_TYPE] = 'Paramount';
+    }
+
+    // VIC-17: AliExpress cost price from native columns H (dollars=7) and I (cents=8)
+    if (supplier === 'aliexpress' || supplier === 'vican') {
+      standardValues[StandardCol.COST_DOLLARS] = nativeValue(nativeRow, 7);
+      standardValues[StandardCol.COST_CENTS] = nativeValue(nativeRow, 8);
     }
 
     standardRows.push({ values: standardValues, nativeRowIndex: nativeRowIndex + 2 });
@@ -143,7 +149,15 @@ export function transformToStandard(buffer: Buffer): { headers: string[]; rows: 
   return { headers: headersMutable, rows: standardRows, supplier };
 }
 
-/** Convert standard rows to xlsx-compatible data for xlsxParser consumption. */
+/** Convert standard rows to xlsx-compatible data for xlsxParser consumption.
+ * Preserves all 18 standard columns including AliExpress cost columns. */
 export function standardRowsToXlsxRows(standardRows: StandardRow[]): unknown[][] {
-  return standardRows.map((row) => [...row.values]);
+  return standardRows.map((row) => {
+    const values: unknown[] = [...row.values];
+    // Ensure cost columns are included even when empty
+    while (values.length < STANDARD_HEADERS.length) {
+      values.push('');
+    }
+    return values;
+  });
 }
