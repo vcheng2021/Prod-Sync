@@ -402,6 +402,16 @@ function AppContent() {
   const [activeProductId, setActiveProductId] = useState<string | null>(null)
   const [browsingProductId, setBrowsingProductId] = useState<string | null>(null)
   const browserWindowRef = useRef<Window | null>(null)
+  // VIC-20 Issue: descriptionHtml rich-text editor needs a ref so we can set
+  // content without dangerouslySetInnerHTML (which fights with contentEditable
+  // on every React re-render and makes the editor un-clickable). During typing
+  // we only update dirty fields — NOT setDraft — so the contentEditable div is
+  // never re-rendered mid-stroke. The committedHtmlRef tracks what React last
+  // wrote to the DOM so we only sync when an external source (retrieve, save,
+  // product switch) changes the description.
+  const descriptionEditorRef = useRef<HTMLDivElement | null>(null)
+  const committedHtmlRef = useRef<string>('')
+  const isDescriptionFocusedRef = useRef(false)
   const [busy, setBusy] = useState(false)
   const [publishing, setPublishing] = useState(false)
   const [saving, setSaving] = useState(false)
@@ -442,6 +452,24 @@ function AppContent() {
 
   const dirtyFieldsFor = (productId: string): Partial<ProductDraft> =>
     dirtyFields[productId] ?? {}
+
+  // Sync the contentEditable description editor's HTML from React state, but
+  // only when the editor does NOT have focus. While the user is typing, the
+  // onInput handler updates React state; this effect would otherwise reset the
+  // DOM (cursor, selection, typed characters) via innerHTML.
+  useEffect(() => {
+    const editor = descriptionEditorRef.current
+    if (!editor) return
+    // Don't touch the DOM while the user is actively editing
+    if (isDescriptionFocusedRef.current) return
+    const newValue = activeProduct?.descriptionHtml ?? ''
+    // Only write when the value actually changed (e.g. product switch,
+    // retrieve, or save) — not on every keystroke during typing
+    if (newValue !== committedHtmlRef.current) {
+      editor.innerHTML = newValue
+      committedHtmlRef.current = newValue
+    }
+  }, [activeProduct?.id, activeProduct?.descriptionHtml])
 
   // ── Startup: load catalog + Shopify readiness ──
   useEffect(() => {
@@ -1093,9 +1121,18 @@ function AppContent() {
 
   const execFormat = (command: string, value?: string) => {
     document.execCommand(command, false, value)
-    const editor = document.getElementById('rich-text-editor')
-    if (editor) {
-      patchProduct(activeProduct!.id, { descriptionHtml: editor.innerHTML } as Partial<ProductDraft>)
+    const editor = descriptionEditorRef.current
+    if (editor && activeProduct) {
+      committedHtmlRef.current = editor.innerHTML
+      // Toolbar buttons use onMouseDown={e => e.preventDefault()} to keep
+      // focus in the editor, so a synchronous dirty-field update is safe.
+      setDirtyFields((current) => ({
+        ...current,
+        [activeProduct.id]: {
+          ...(current[activeProduct.id] ?? {}),
+          descriptionHtml: editor.innerHTML,
+        },
+      }))
     }
   }
 
@@ -1106,42 +1143,69 @@ function AppContent() {
 
   const renderRichTextInput = (
     label: string,
-    value: string,
   ) => {
     const isDirty = activeProduct && 'descriptionHtml' in (dirtyFieldsFor(activeProduct.id) ?? {})
+    // VIC-20: Use a <div> instead of <label> here. A <label> wraps both the
+    // toolbar buttons (labelable descendants) and the contentEditable editor.
+    // Clicking the editor triggers the label's activation behavior, which
+    // dispatches a synthetic click on the first labelable descendant (the Bold
+    // button), immediately stealing focus from the contentEditable div. A <div>
+    // has no such behavior, so clicks on the editor stay in the editor.
     return (
-      <label className={`field ${isDirty ? 'dirty' : ''}`}>
+      <div className={`field ${isDirty ? 'dirty' : ''}`}>
         <span>{label}</span>
         <div className={`rich-text-editor ${isDirty ? 'dirty' : ''}`}>
           <div className="rich-text-toolbar">
-            <button type="button" className="rtb-btn" onClick={() => execFormat('bold')} title="Bold"><b>B</b></button>
-            <button type="button" className="rtb-btn" onClick={() => execFormat('italic')} title="Italic"><i>I</i></button>
-            <button type="button" className="rtb-btn" onClick={() => execFormat('underline')} title="Underline"><u>U</u></button>
+            <button type="button" className="rtb-btn" onMouseDown={(e) => e.preventDefault()} onClick={() => execFormat('bold')} title="Bold"><b>B</b></button>
+            <button type="button" className="rtb-btn" onMouseDown={(e) => e.preventDefault()} onClick={() => execFormat('italic')} title="Italic"><i>I</i></button>
+            <button type="button" className="rtb-btn" onMouseDown={(e) => e.preventDefault()} onClick={() => execFormat('underline')} title="Underline"><u>U</u></button>
             <span className="rtb-sep" />
-            <button type="button" className="rtb-btn" onClick={() => execFormat('insertUnorderedList')} title="Bullet list">•≡</button>
-            <button type="button" className="rtb-btn" onClick={() => execFormat('insertOrderedList')} title="Numbered list">1.</button>
+            <button type="button" className="rtb-btn" onMouseDown={(e) => e.preventDefault()} onClick={() => execFormat('insertUnorderedList')} title="Bullet list">•≡</button>
+            <button type="button" className="rtb-btn" onMouseDown={(e) => e.preventDefault()} onClick={() => execFormat('insertOrderedList')} title="Numbered list">1.</button>
             <span className="rtb-sep" />
-            <button type="button" className="rtb-btn" onClick={() => execFormat('createLink', 'https://')} title="Link">🔗</button>
-            <button type="button" className="rtb-btn" onClick={insertImage} title="Insert image">🖼</button>
+            <button type="button" className="rtb-btn" onMouseDown={(e) => e.preventDefault()} onClick={() => execFormat('createLink', 'https://')} title="Link">🔗</button>
+            <button type="button" className="rtb-btn" onMouseDown={(e) => e.preventDefault()} onClick={insertImage} title="Insert image">🖼</button>
             <span className="rtb-sep" />
-            <button type="button" className="rtb-btn" onClick={() => execFormat('removeFormat')} title="Clear formatting">✕</button>
+            <button type="button" className="rtb-btn" onMouseDown={(e) => e.preventDefault()} onClick={() => execFormat('removeFormat')} title="Clear formatting">✕</button>
           </div>
           <div
-            id="rich-text-editor"
+            ref={descriptionEditorRef}
             className="rich-text-area"
-            contentEditable
+            contentEditable="true"
             suppressContentEditableWarning
             data-placeholder="Fetched description or your own copy"
-            onInput={() => {
-              const editor = document.getElementById('rich-text-editor')
-              if (editor) {
-                patchProduct(activeProduct!.id, { descriptionHtml: editor.innerHTML } as Partial<ProductDraft>)
+            tabIndex={0}
+            onFocus={() => { isDescriptionFocusedRef.current = true }}
+            onBlur={() => {
+              isDescriptionFocusedRef.current = false
+              // Sync the final HTML to dirty fields only after the user
+              // finishes editing. Updating state on every keystroke re-renders
+              // AppContent in React 19, which can disrupt the contentEditable
+              // cursor/focus.
+              const editor = descriptionEditorRef.current
+              if (editor && activeProduct) {
+                setDirtyFields((current) => ({
+                  ...current,
+                  [activeProduct.id]: {
+                    ...(current[activeProduct.id] ?? {}),
+                    descriptionHtml: editor.innerHTML,
+                  },
+                }))
               }
             }}
-            dangerouslySetInnerHTML={{ __html: value ?? '' }}
+            onInput={() => {
+              // Only track the committed HTML in a ref — do NOT call
+              // setDirtyFields here. Any state update triggers a re-render
+              // of AppContent, which in React 19 can disrupt the
+              // contentEditable's native cursor and focus.
+              const editor = descriptionEditorRef.current
+              if (editor) {
+                committedHtmlRef.current = editor.innerHTML
+              }
+            }}
           />
         </div>
-      </label>
+      </div>
     )
   }
 
@@ -1154,7 +1218,7 @@ function AppContent() {
     const isDirty =
       activeProduct && field in (dirtyFieldsFor(activeProduct.id) ?? {})
     if (field === 'descriptionHtml' && isTextarea) {
-      return renderRichTextInput(label, value ?? '')
+      return renderRichTextInput(label)
     }
     const commonProps = {
       value: value ?? '',
@@ -1927,7 +1991,14 @@ function AppContent() {
           {/* ── Product Details section ── */}
           <div className="detail-section-heading">
             <div className="eyebrow">PRODUCT DETAILS</div>
-            <span>Details</span>
+            {activeProduct ? (
+              <div className="heading-row-indicator">
+                <div className="eyebrow">ROW {activeProduct.rowNumber}</div>
+                {renderStatus(activeProduct.enrichmentStatus)}
+              </div>
+            ) : (
+              <span>Details</span>
+            )}
           </div>
           {activeProduct ? (
             <>
@@ -2041,13 +2112,6 @@ function AppContent() {
                   )}
                 </section>
               )}
-
-              <div className="editor-header">
-                <div>
-                  <div className="eyebrow">ROW {activeProduct.rowNumber}</div>
-                </div>
-                {renderStatus(activeProduct.enrichmentStatus)}
-              </div>
 
               <div className="field-group">
                 <div className="field-group-heading">

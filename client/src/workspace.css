@@ -881,6 +881,11 @@ a:hover { text-decoration: underline; }
   text-transform: uppercase;
   letter-spacing: 0.05em;
 }
+.heading-row-indicator {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
 .detail-section-heading:first-child { margin-top: 0; }
 
 /* ── Status badges ── */
