@@ -2,6 +2,13 @@ import crypto from 'node:crypto';
 import { config } from '../config.js';
 import type { PlatformClient, PlatformProductData, PublishResult, ProductMatch } from './platformClient.js';
 
+// Strip surrounding quotes and validate image extension before sending
+// URLs to WooCommerce.  WooCommerce's own media-upload endpoint is the
+// preferred path for images (see uploadImagesToMediaLibrary), but these
+// helpers remain as a fallback for remote-URL image references.
+const IMAGE_URL_RE = /\.(jpe?g|png|webp|gif|bmp|avif)(\?.*)?$/i;
+const cleanImageUrl = (url: string): string => url.trim().replace(/^["']|["']$/g, '');
+
 /** Simple OAuth 1.0a helper for WooCommerce REST API (Consumer Key/Secret). */
 function wooCommerceSignUrl(url: string, method: string): string {
   const consumerKey = config.wooCommerceConsumerKey;
@@ -41,7 +48,7 @@ export class WooCommerceClient implements PlatformClient {
   private baseUrl: string;
 
   constructor() {
-    this.baseUrl = config.wooCommerceStoreUrl.replace(/\/+$/, '');
+    this.baseUrl = config.wooCommerceStoreUrl;
   }
 
   getPlatformName(): string {
@@ -126,7 +133,10 @@ export class WooCommerceClient implements PlatformClient {
       status: 'publish',
       description: product.descriptionHtml,
       short_description: product.descriptionHtml,
-      images: product.imageUrls.map((url) => ({ src: url })),
+      images: product.imageUrls
+        .map(cleanImageUrl)
+        .filter((url) => IMAGE_URL_RE.test(url))
+        .map((url) => ({ src: url })),
       meta_data: [
         { key: '_ecomint_unit_price', value: product.unitPrice ?? '' },
         { key: '_ecomint_supplier_type', value: product.supplierType },

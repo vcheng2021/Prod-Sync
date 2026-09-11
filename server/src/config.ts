@@ -59,11 +59,22 @@ export const config = {
   imageDownloadConcurrency: Number(process.env.IMAGE_DOWNLOAD_CONCURRENCY ?? 3),
   authSecret: process.env.AUTH_SECRET ?? crypto.randomUUID(),
   sessionTimeoutMs: Number(process.env.SESSION_TIMEOUT_MS ?? 1_800_000),
-  wooCommerceStoreUrl: process.env.WOOCOMMERCE_STORE_URL ?? '',
-  wooCommerceConsumerKey: process.env.WOOCOMMERCE_CONSUMER_KEY ?? '',
-  wooCommerceConsumerSecret: process.env.WOOCOMMERCE_CONSUMER_SECRET ?? '',
-  wooCommerceApiVersion: process.env.WOOCOMMERCE_API_VERSION ?? 'wc/v3',
-  wooCommerceEmail: process.env.WOOCOMMERCE_EMAIL ?? '',
+  // stripQuotes handles dotenv not stripping surrounding quotes from quoted
+  // env values (e.g. WOOCOMMERCE_STORE_URL="https://shop.example.com").
+  // Trailing slashes are stripped here so both Publisher and Client receive
+  // a clean base URL.
+  wooCommerceStoreUrl: stripQuotes(process.env.WOOCOMMERCE_STORE_URL ?? '').replace(/\/+$/, ''),
+  wooCommerceConsumerKey: stripQuotes(process.env.WOOCOMMERCE_CONSUMER_KEY ?? ''),
+  wooCommerceConsumerSecret: stripQuotes(process.env.WOOCOMMERCE_CONSUMER_SECRET ?? ''),
+  wooCommerceApiVersion: stripQuotes(process.env.WOOCOMMERCE_API_VERSION ?? 'wc/v3'),
+  wooCommerceEmail: stripQuotes(process.env.WOOCOMMERCE_EMAIL ?? ''),
+  wooCommerceUsername: stripQuotes(process.env.WOOCOMMERCE_USERNAME ?? ''),
+  wooCommerceAppPassword: stripQuotes(process.env.WOOCOMMERCE_APP_PASSWORD ?? ''),
+  // When set, images are served from this URL (e.g. https://ecomint.example.com)
+  // so WooCommerce can download them from the eComInt server directly.
+  // Set this when the server is publicly accessible and the WooCommerce
+  // media library upload fails (401 — user lacks upload_files capability).
+  serverUrl: stripQuotes(process.env.SERVER_URL ?? '').replace(/\/+$/, ''),
 };
 
 export const shopifyConfigured = Boolean(config.shopifyAdminAccessToken);

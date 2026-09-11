@@ -7,7 +7,7 @@ COPY client/package*.json ./client/
 COPY server/tsconfig.json ./server/
 
 RUN apt-get update \
-  && apt-get install --no-install-recommends -y python3 make g++ \
+  && apt-get install --no-install-recommends -y python3 make g++ git \
   && npm ci \
   && npm ci --prefix client \
   && rm -rf /var/lib/apt/lists/*
@@ -15,6 +15,9 @@ RUN apt-get update \
 COPY client ./client
 COPY server ./server
 COPY suppliers ./suppliers
+
+# VIC-23: Capture git commit hash for auto-versioning
+RUN echo "$(git rev-parse HEAD 2>/dev/null || echo unknown)" > /tmp/build-commit.txt
 
 RUN npm run build
 
@@ -35,6 +38,8 @@ RUN npm ci --omit=dev && npm cache clean --force
 COPY --from=builder /app/client/dist ./client/dist
 COPY --from=builder /app/server/dist ./server/dist
 COPY --from=builder /app/suppliers ./suppliers
+# VIC-23: Build-time git commit fingerprint for auto-versioning
+COPY --from=builder /tmp/build-commit.txt /app/.build-commit
 
 RUN mkdir -p /app/data /app/logs /app/productimage
 

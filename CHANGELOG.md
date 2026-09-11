@@ -1,6 +1,62 @@
 # eComInt Change History
 
-## 2026-09-09 — VIC-22, UI refinements
+## 2026-09-11 — VIC-23, VIC-24
+
+### JIRA VIC-23 — Supplier dropdown, startup flow, and auto-incrementing APP_VERSION
+
+- **No-supplier default state**: The supplier dropdown now defaults to an empty "— select supplier —" option instead of auto-selecting "Cellar Drive". The landing page displays a "Select a supplier to begin" prompt with the upload zone disabled until a supplier is chosen.
+- **Apply/Cancel always visible**: The Apply and Cancel buttons are now shown whenever a supplier is pending selection (previously only appeared when `pendingSupplier !== supplier`). Selecting the empty option clears the pending selection (no Apply shown).
+- **No draft auto-load on startup**: The startup `useEffect` no longer calls `getCurrentDraft()` on app load. It only calls `getReadiness()` for version + config status. A draft is loaded only when the user selects a supplier and clicks Apply (which triggers `handleSupplierSwitch` → `getCurrentDraftBySupplier`).
+- **Auto-incrementing APP_VERSION (VIC-23.3)**: Added `computeRuntimeVersion()` and `resolveGitCommit()` to `DraftStore`. On each server startup, the current git commit hash is resolved (via `git rev-parse HEAD` locally, or a build-time fingerprint file in Docker). If the commit differs from the stored `app_last_commit` in the `app_state` table, the patch segment of `APP_VERSION` is incremented (e.g., `0.3.1` → `0.3.2`). The runtime version is persisted and served by `/api/health` and `/api/ready`. Falls back to the static `APP_VERSION` env value if git is unavailable and no build fingerprint exists.
+- **Files changed**: `server/src/drafts/draftStore.ts`, `server/src/index.ts`, `client/src/App.tsx`, `client/src/workspace.css`.
+
+### JIRA VIC-24 — Auto-download product images on load and pagination
+
+- **Batch image download endpoint**: Added `POST /api/drafts/:draftId/products/images/batch` on the server. Accepts `{ productIds: string[] }` and downloads images for all products that have an `imageUrl` but no valid local image, using `config.imageDownloadConcurrency` (default 3) for parallel processing. Returns the updated product list. This also activates the previously unused `IMAGE_DOWNLOAD_CONCURRENCY` config field.
+- **Client auto-download**: Added a `useEffect` in `AppContent()` that automatically triggers batch image downloads for visible products (the current page of 40 products) whenever the visible product IDs change or a new draft is loaded. Uses `imageCheckedIdsRef` to track which products have already been checked, preventing redundant downloads when paginating back to a previously-viewed page. A loading indicator (`…` with pulse animation) is shown in the thumbnail while an image is being downloaded.
+- **Retrieve buttons enabled for all products**: Removed the `product.selected` guard from `handleRetrieve()` and from the `disabled` props on both the list-row and detail-pane Retrieve buttons. Retrieve (source data + image) is now available for every product with a `sourceUrl`, regardless of checkbox selection. Checkboxes remain publishing-only as clarified.
+- **Files changed**: `server/src/routes/imports.ts`, `client/src/api.ts`, `client/src/App.tsx`, `client/src/workspace.css`.
+
+## 2026-09-10 — WooCommerce publishing fixes
+
+### WooCommerce image upload: 401 / 429 / image_upload_error
+
+**Problem:** Publishing to WooCommerce failed with a cascade of image errors:
+
+1. `woocommerce_product_image_upload_error` — "Sorry, you are not allowed to upload this file type."
+2. WordPress media endpoint returned **401 Unauthorized** — "Sorry, you are not allowed to create posts as this user."
+3. Subsequent requests triggered **429 Too Many Requests** (rate limiting).
+
+**Root causes identified (in order of discovery):**
+
+1. **Quoted `.env` values**: `WOOCOMMERCE_STORE_URL` was wrapped in quotes in `.env`, causing a URI malformed error. Fixed with `stripQuotes()` in `config.ts` applied to all WC config values.
+2. **Tags format mismatch**: WooCommerce API expected `[{ name: "Brand" }]` (array of objects) but the code sent `"Brand,Type,Country"` (comma-separated string). Fixed: `tags.map((tag) => ({ name: tag }))`.
+3. **WooCommerce OAuth keys can't upload media**: The `consumer_key`/`consumer_secret` params authenticate to the WooCommerce REST API (`/wp-json/wc/v3/`) but NOT to the WordPress REST API (`/wp-json/wp/v2/media`). WordPress requires separate authentication for media uploads.
+4. **No Application Password configured**: The WordPress media endpoint needs WordPress Application Passwords (not WooCommerce keys) via `Authorization: Basic` header. Added `WOOCOMMERCE_USERNAME` and `WOOCOMMERCE_APP_PASSWORD` env vars.
+5. **Malformed AliExpress image URLs**: AliExpress serves variant URLs like `xxx.jpg_480x480q75.jpg_.avif` that end in `.avif` (passes extension check) but WordPress rejects them. Fixed with `ALIEXPRESS_VARIANT_RE = /\.jpg_[^.]/` filter.
+6. **Rate limiting cascade**: After the first 401, subsequent media upload attempts triggered 429. Fixed with early-exit logic: first 401/403 response → skip all remaining media uploads, fall back to remote URLs.
+7. **RichTextEditor dirty-field race condition**: The `onInput` handler only updated an internal ref, not the dirty fields map. The dirty-field update only happened on `onBlur`. Clicking "Publish" without blurring the editor meant the description was never saved. Fixed: `onInput` now also calls `setDirtyFields`.
+
+**Changes made:**
+
+- `server/src/config.ts`: Added `wooCommerceUsername` and `wooCommerceAppPassword` config fields. All WC config values use `stripQuotes()`.
+- `server/src/platforms/woocommercePublisher.ts`:
+  - `IMAGE_URL_RE` restricted to JPEG only (`/\.(jpe?g)(\?.*)?$/i`) — WebP/AVIF/GIF/BMP filtered out to avoid `media_sideload_image` rejections.
+  - Added `ALIEXPRESS_VARIANT_RE = /\.jpg_[^.]/` to filter malformed AliExpress URLs like `xxx.jpg_480x480q75.jpg_.avif`.
+  - Added `cleanImageUrl()` backslash stripping: `.replace(/\\+$/, '')`.
+  - Added `buildMediaUploadHeaders()` using `Authorization: Basic` with Application Passwords.
+  - Added `buildMediaUploadUrl()` returning clean URL when App Password is set.
+  - Added 401/403 early-exit in `resolveProductImages()` — skips remaining media uploads, prevents 429 cascade.
+  - Added 200ms delay between media upload attempts.
+  - Enhanced `logVican()` debug logging with `authMethod` and `hasAppPassword` fields.
+- `server/src/index.ts`: `/api/ready` now reports `wooMediaUploadReady` and `wooAppPasswordMissing`.
+- `client/src/App.tsx` `RichTextEditor`: `onInput` now also calls `setDirtyFields` to immediately stage description/attributes as dirty (was only on `onBlur`).
+- `.env.example`: Added `WOOCOMMERCE_USERNAME` and `WOOCOMMERCE_APP_PASSWORD` documentation.
+- `docker-compose.yml`: Added missing WooCommerce environment variables.
+
+**Remaining issue:** The Application Password for WordPress still needs to be a valid WordPress-generated Application Password (not a user-chosen password). WordPress generates 24-character passwords from the Users → Your Profile → Application Passwords section. The username must be the WordPress username (not email).
+
+**Alternative approach:** Set `SERVER_URL=https://your-public-server.com` in `.env` to serve images directly from the eComInt server (Strategy 1). This bypasses the WordPress media library entirely and requires no Application Password.
 
 ### JIRA VIC-22 — Supplier-aware draft restoration on supplier switch
 

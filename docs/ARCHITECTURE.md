@@ -114,11 +114,13 @@ Ordinary edits first exist in the browser dirty-field map. Save sends only the c
 
 1. Open or create the configured SQLite database and apply schema migrations.
 2. Create the log directory and append a startup record.
-3. If the initialization marker is absent and the database has no products, parse the configured default workbook and insert it in a transaction.
-4. Mark initialization complete after a successful seed, including a seed with row-level import warnings.
-5. If the database already contains products, restore the current catalog and do not re-seed.
-6. If the default workbook is missing, keep the application usable for explicit upload and log the condition.
-7. On explicit workbook upload — either via the **Load workbook** button in the workspace toolbar or via the landing-page upload zone — parse and validate the workbook, then merge all valid keys into the current catalog in one SQLite transaction.
+3. Auto-increment the runtime `APP_VERSION` by comparing the current git commit hash (or build-time fingerprint) against the stored `app_last_commit` in `app_state`; if the commit changed, increment the patch segment and persist the new version.
+4. If the initialization marker is absent and the database has no products, parse the configured default workbook and insert it in a transaction.
+5. Mark initialization complete after a successful seed, including a seed with row-level import warnings.
+6. If the database already contains products, restore the current catalog and do not re-seed.
+7. If the default workbook is missing, keep the application usable for explicit upload and log the condition.
+8. On the client, the app starts with no supplier selected (`supplier = ''`). The landing page shows a prompt ("Select a supplier to begin") and the upload zone is disabled. Only `getReadiness()` is called on startup — no draft is auto-loaded. When the operator selects a supplier and clicks **Apply**, `handleSupplierSwitch` calls `GET /api/drafts/current?supplier=<supplier>` to restore existing data for that supplier; if no draft exists, the upload zone becomes active.
+9. On explicit workbook upload — either via the **Load workbook** button in the workspace toolbar or via the landing-page upload zone — parse and validate the workbook, then merge all valid keys into the current catalog in one SQLite transaction.
 
 The default workbook is a first-run seed, not a recurring synchronization source. After a purge, the database remains initialized and the operator must explicitly select a workbook. The **Load workbook** toolbar button makes explicit workbook selection available directly from the workspace without requiring a Reset page first.
 
@@ -170,7 +172,11 @@ Only allowlisted editable fields are accepted. The server updates only supplied 
 
 ### `POST /api/drafts/:draftId/products/:productId/retrieve`
 
-Requires the product to be selected. It fetches source details and downloads the image only for that requested row, then persists the results.
+Fetches source details and downloads the image for that product. The product must have a `sourceUrl`; selection state is no longer required — Retrieve is available for all products. Retrieves are explicitly user-initiated; import and checkbox toggles never make network requests.
+
+### `POST /api/drafts/:draftId/products/images/batch`
+
+Accepts `{ "productIds": string[] }` and downloads images for all products that have an `imageUrl` but no valid local image. Downloads run in parallel up to `IMAGE_DOWNLOAD_CONCURRENCY` (default 3) at a time. The client calls this endpoint automatically for visible (paginated) products when the page loads or changes; it does not require selection. Returns the updated product list.
 
 ### `POST /api/drafts/:draftId/publish`
 
@@ -194,7 +200,9 @@ Requires `{ "confirmation": "PURGE" }`. It deletes catalog products, drafts, sou
 
 ## 8. Source retrieval flow
 
-Import never requests supplier URLs or image URLs. Checking a row never requests them. A selected row's explicit Retrieve action performs the source fetch and image download with configured allowlists, redirect limits, timeouts, content-type checks, and response-size limits.
+Import never requests supplier URLs or image URLs. Checking a row never requests them. A product's explicit Retrieve action (available for all products with a `sourceUrl`, not just checked ones) performs the source fetch and image download with configured allowlists, redirect limits, timeouts, content-type checks, and response-size limits.
+
+Additionally, the client auto-downloads images for all visible (paginated) products that lack a local image via the batch endpoint (`POST /api/drafts/:draftId/products/images/batch`). This happens on page load, pagination change, and draft switch — no user click required. Products already checked are tracked client-side to avoid redundant downloads.
 
 Successful source details are sanitized before SQLite storage, browser display, or Shopify publication. Cache hits avoid unnecessary network calls but do not create retrieval work for unchecked products. A changed source URL invalidates the prior enrichment state during merge.
 
@@ -224,6 +232,56 @@ When a product has its `publishToOnlineStore` flag set (default on), the publish
 The operator can assign products to predefined Shopify custom collections at publish time. `SHOPIFY_COLLECTION_ID` in `.env` is a comma-separated list of `Name:ID` pairs (e.g. `"Spirits:314155073588,Red Wine:285318578228"`). Surrounding quotes on names and IDs are stripped during parsing. The parsed collection list is exposed on `GET /api/ready` as the `collections` array, rendered as a **Collections** multiselect in the editor panel.
 
 When the operator selects collections and publishes, the `globalCollectionIds` are sent to `POST /api/drafts/:draftId/publish` and applied to every selected product via `collectionAddProducts`. Collection-management failures are caught and reported in the product's publish error string without changing the product's publish status from `published`. The existing `read_products` and `write_products` scopes cover these `collectionAddProducts` mutations; no additional Shopify permissions are required.
+
+## 9b. WooCommerce publishing
+
+For Vican/AliExpress products (`supplier === 'vican' || supplier === 'aliexpress'`), the publishing router dispatches to `publishToWooCommerce()` in `server/src/platforms/woocommercePublisher.ts`. For Shopify products, it uses the Shopify publisher described in §9.
+
+### Authentication
+
+WooCommerce publishing uses two separate credential sets:
+
+- **Product CRUD** (search, create, update): WooCommerce REST API keys (`WOOCOMMERCE_CONSUMER_KEY` / `WOOCOMMERCE_CONSUMER_SECRET`) passed as query params to `/wp-json/wc/v3/products`.
+- **Media library upload**: WordPress Application Passwords (`WOOCOMMERCE_USERNAME` / `WOOCOMMERCE_APP_PASSWORD`) via `Authorization: Basic` header to `/wp-json/wp/v2/media`. WC API keys alone **cannot** authenticate to the WordPress REST API.
+
+### Image resolution strategy (3 tiers, in priority order)
+
+1. **SERVER_URL (primary)**: If `SERVER_URL` is configured in `.env`, images are served from `${SERVER_URL}/productimage/<localFilename>`. WooCommerce downloads them directly — no WordPress auth needed at all.
+2. **WordPress media library upload (secondary)**: Uploads the local image file to `/wp-json/wp/v2/media` using Application Password Basic Auth. Returns `{ id: mediaId }` on success. JPEG fallback via Sharp if the original format is rejected.
+3. **Remote URL fallback (last resort)**: Sends the original remote URL as `{ src: "url" }` — WooCommerce's `media_sideload_image` downloads it. AliExpress CDN URLs may be blocked or rejected by WordPress file-type checks.
+
+### 401 early-exit & rate limiting
+
+If the first media library upload returns 401 or 403, the publisher sets `mediaUploadsBlocked = true` and skips all remaining media uploads for that publish batch. This prevents cascading 429 "Too Many Requests" responses from WordPress security plugins (Wordfence, etc.) after auth failures. A 200ms delay separates each media upload attempt to further avoid rate limits.
+
+### WooCommerce field mapping
+
+- Product title → `name`
+- Suggested sale price → `regular_price`
+- Editable Shopify inventory → `stock_quantity` (+ `manage_stock: true`)
+- Tags → `tags: [{ name: "Brand" }, { name: "ProductType" }, ...]`
+- Categories → `categories: [{ id: categoryId }]`
+- Description → `description` (built from `descriptionHtml` + `productDescription` + `productAttributes` via `buildDescription()`)
+- Short description → `short_description` (uses `productDescription` or `descriptionHtml`)
+- Images → `images: [{ id: mediaId }]` or `[{ src: "url" }]`
+
+### Debug logging
+
+All publish operations log to `logs/vican-api.log` via `logVican()`:
+- `publish_start` — initial state, server URL, image count
+- `image_media_upload_request` — upload URL, content type, auth method
+- `image_media_upload_success` / `image_media_upload_failed` — response details
+- `image_resolve_server_url` / `image_resolve_media_blocked` / `image_resolve_remote_url_fallback` — which strategy was used
+- `publish_product_request` / `publish_create_response` / `publish_update_response` — full request/response
+
+Credentials are redacted from all log entries (`consumer_key`, `consumer_secret`, `Authorization` headers).
+
+### Image URL filtering
+
+Source image URLs from AliExpress are cleaned and validated before use:
+- `cleanImageUrl()` strips surrounding quotes, trailing backslashes
+- `IMAGE_URL_RE = /\.(jpe?g)(\?.*)?$/i` — only JPEG URLs are allowed (WebP/AVIF/PNG filtered to avoid WordPress sideload rejections)
+- `ALIEXPRESS_VARIANT_RE = /\.jpg_[^.]/` — rejects malformed AliExpress URLs like `xxx.jpg_480x480q75.jpg_.avif`
 
 ## 10. Logging and redaction
 
@@ -259,7 +317,8 @@ Secrets are runtime environment variables. The real `.env` file, database, logs,
 
 Important server variables are:
 
-- `APP_VERSION`: application version string shown in the UI and returned by `/api/health` and `/api/ready`, default `0.1.0`;
+- `APP_VERSION`: base application version string (patch segment auto-incremented at runtime on git commit change), default `0.1.0`;
+- `IMAGE_DOWNLOAD_CONCURRENCY`: number of parallel image downloads in the batch endpoint, default `3`;
 - `PORT`: HTTP port (API server and Docker container-internal), default `8787`. Override with `HOST_PORT` for the Docker host-facing port;
 - `DATABASE_PATH`: SQLite path, default `./data/ecomint.db`;
 - `PRODUCT_IMAGE_DIRECTORY`: image directory, default `./productimage`;

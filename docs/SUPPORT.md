@@ -6,7 +6,7 @@ This runbook is for operators and maintainers of the local eComInt product works
 
 The application stores product data locally in SQLite. A database purge deletes local catalog state but does not delete Shopify products.
 
-> Last updated: 2026-09-02. The runbook covers the current API, issue-log, inventory, reset, version display, checked-row clearing behavior, and the Load workbook toolbar button.
+> Last updated: 2026-09-11. The runbook covers the current API, issue-log, inventory, reset, version display, checked-row clearing behavior, Load workbook toolbar button, no-supplier startup state, auto-incrementing APP_VERSION, auto-image download on page load, and enabled Retrieve buttons for all products.
 
 ## 2. Prerequisites
 
@@ -127,16 +127,20 @@ Do not use `docker compose down -v` unless the data, logs, and images have been 
 
 On the first run with a new data volume, the server creates the SQLite schema and imports `suppliers/sup2_paramountliquor.xlsx` once. Source pages and images are not fetched during this seed.
 
-On restart, the server loads the catalog from SQLite. It does not import the seed workbook again. SQLite WAL files remain beside the database in `/app/data`.
+On restart, the server auto-increments the runtime `APP_VERSION` (incrementing the patch segment when the git commit hash changes) and serves it via `/api/health` and `/api/ready`. The client starts with no supplier selected — the landing page shows a prompt and the upload zone is disabled until a supplier is chosen and Apply is clicked. Only `getReadiness()` is called on startup; no draft is auto-loaded. Selecting a supplier and clicking Apply triggers `GET /api/drafts/current?supplier=<supplier>` to restore existing data for that supplier.
+
+SQLite WAL files remain beside the database in `/app/data`.
 
 If the catalog has been purged, the seed marker remains set. Restarting will leave the catalog empty. Select a workbook explicitly to begin again.
 
 ## 7. Workbook import and merge
 
+The client starts with no supplier selected. Select a supplier from the dropdown, then click **Apply** to proceed. If saved data exists for that supplier, it is restored; otherwise the upload zone becomes active.
+
 Select an `.xlsx` workbook in the application. There are two ways to open the file picker:
 
 1. **Load workbook** button in the workspace toolbar — available at all times when a catalog is loaded, so you can load additional products or refresh existing products without resetting the page.
-2. **Landing-page upload zone** — shown when the catalog is empty or after **Reset page**.
+2. **Landing-page upload zone** — shown when no supplier is selected or after **Reset page**.
 
 The first worksheet is parsed. Column B is the stable supplier product key and is preserved as text to retain leading zeroes. Column K provides the supplier "Type" (e.g. "Direct from Supplier" / "New"), which is supplier-owned and refreshed on merge. When a workbook is imported into an existing catalog, the merge preserves all app-owned fields (Shopify inventory, manually edited sale prices, descriptions, selection state, enrichment state, and Shopify publish/history state). The import response reports added, updated, unchanged, and invalid rows. Review warnings before publishing.
 
@@ -175,7 +179,9 @@ In the product detail editor, supplier-owned fields — Product Title, Unit Pric
 
 ## 9. Source retrieval and publishing
 
-Checking a row does not contact the supplier. Pressing Retrieve source data on a checked row fetches the permitted supplier page and image, then stores the result. Failed retrievals show a retry action.
+Checking a row does not contact the supplier. The **Retrieve source data** button is available for every product that has a source URL — selection is only used for publishing. Pressing Retrieve on any product fetches the permitted supplier page and image, then stores the result. Failed retrievals show a retry action.
+
+Images are also downloaded automatically in the background for all visible (paginated) products that lack a local image. The client calls `POST /api/drafts/:draftId/products/images/batch` for the current page's products; downloads run in parallel up to `IMAGE_DOWNLOAD_CONCURRENCY` (default 3). Already-downloaded images are not re-fetched.
 
 Publishing requires selected and valid rows plus final confirmation. The review displays the suggested sale price and Shopify inventory that will be sent. Product titles are matched case-insensitively:
 
@@ -312,6 +318,31 @@ This is expected. Reset page is a non-destructive client reset that returns to t
 ### Want to load a new workbook without resetting
 
 Use the **Load workbook** button in the toolbar. It opens a file picker and imports the selected `.xlsx` workbook, merging new rows and updating existing rows by column-B key. All app-owned fields (sale price overrides, inventory, descriptions, selections, enrichment state, Shopify status) are preserved. You do not need to Reset page first.
+
+### The Type column (column K) is not showing in imported products
+
+### WooCommerce publishing fails with `woocommerce_product_image_upload_error`
+
+This error means WordPress rejected an image during product creation. Multiple causes:
+
+1. **Malformed image URLs from AliExpress**: URLs like `xxx.jpg_480x480q75.jpg_.avif` have mixed extensions that WordPress can't sideload. The publisher now filters these via `ALIEXPRESS_VARIANT_RE = /\.jpg_[^.]/`. Ensure you're running the latest code.
+
+2. **Media library auth failure (401)**: The WordPress media endpoint (`/wp-json/wp/v2/media`) requires WordPress Application Passwords, not WooCommerce API keys. If you see `401` or `rest_not_logged_in` in `logs/vican-api.log`, generate a proper WordPress Application Password:
+   - Log into `https://<your-wp-site>/wp-admin` as the configured user
+   - Go to **Users → Your Profile → Application Passwords**
+   - Generate a new password (WordPress auto-generates it — you can't set your own)
+   - Paste it into `WOOCOMMERCE_APP_PASSWORD` in `.env` (wrap in quotes if it contains special chars)
+   - The username must be the WordPress username (not the email)
+
+3. **Rate limiting (429)**: After repeated 401s, WordPress security plugins (Wordfence, iThemes) return `429 Too Many Requests`. The publisher now stops media uploads after the first 401 to prevent this. Wait 5+ minutes before retrying.
+
+4. **Missing `upload_files` capability**: The WordPress user needs `upload_files` capability (Administrator or Editor role by default). Shop Manager role lacks this.
+
+**Alternative**: Set `SERVER_URL=https://your-public-server.com` in `.env` to bypass the media library entirely — WooCommerce downloads images directly from your server. The server must be publicly accessible via HTTPS.
+
+### Product description is empty when publishing to WooCommerce
+
+The rich text editor's `onInput` handler now immediately stages changes as dirty. If you previously experienced empty descriptions, ensure you blur the editor or click elsewhere before publishing. The editor now marks fields dirty on every keystroke, eliminating the race condition with the Publish button.
 
 ### The Type column (column K) is not showing in imported products
 

@@ -18,6 +18,11 @@ import { createAuthMiddleware } from './auth/authMiddleware.js';
 const app = express();
 const logger = new AppLogger(config.logDirectory, config.logDirectory);
 const store = new DraftStore(config.databasePath);
+
+// VIC-23: Auto-increment APP_VERSION on code change
+config.appVersion = store.computeRuntimeVersion(config.appVersion, store.resolveGitCommit());
+console.log(`[eComInt] Runtime version: v${config.appVersion}`);
+
 const authService = new AuthService(config.databasePath);
 const authMiddleware = createAuthMiddleware(authService, logger);
 
@@ -82,6 +87,11 @@ app.get('/api/ready', (_request, response) => {
   if (!config.wooCommerceStoreUrl) wooMissing.push('WOOCOMMERCE_STORE_URL');
   if (!config.wooCommerceConsumerKey) wooMissing.push('WOOCOMMERCE_CONSUMER_KEY');
   if (!config.wooCommerceConsumerSecret) wooMissing.push('WOOCOMMERCE_CONSUMER_SECRET');
+  // App password is needed for WordPress media library uploads (Strategy 2).
+  // SERVER_URL (Strategy 1) works without it.
+  const wooAppPasswordMissing: string[] = [];
+  if (!config.wooCommerceUsername) wooAppPasswordMissing.push('WOOCOMMERCE_USERNAME');
+  if (!config.wooCommerceAppPassword) wooAppPasswordMissing.push('WOOCOMMERCE_APP_PASSWORD');
   response.json({
     ok: true,
     version: config.appVersion,
@@ -93,6 +103,9 @@ app.get('/api/ready', (_request, response) => {
     wooConfigured: wooMissing.length === 0,
     wooStoreUrl: config.wooCommerceStoreUrl,
     wooMissing,
+    wooAppPasswordMissing,
+    wooMediaUploadReady: wooAppPasswordMissing.length === 0,
+    serverUrl: config.serverUrl,
   });
 });
 app.use('/api/auth', createAuthRouter(authService, logger));

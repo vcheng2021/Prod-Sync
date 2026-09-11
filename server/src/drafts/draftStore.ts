@@ -1,5 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
+import { execFileSync } from 'node:child_process';
 import Database from 'better-sqlite3';
 import type { DraftResponse, DraftSummary, EnrichedProductDetails, ProductDraft, PublishStatus, WorkbookImportSummary } from '../types.js';
 
@@ -299,6 +300,7 @@ export class DraftStore {
 
   // VIC-22: Get the most recently updated draft that has at least one product
   // matching the given supplier. Returns null if no matching draft exists.
+  // VIC-23: Filter the returned products to only those matching the requested supplier.
   getCurrentDraftBySupplier(userId: string, supplier: string): DraftResponse | null {
     const row = this.database.prepare(
       `SELECT d.* FROM drafts d
@@ -307,7 +309,13 @@ export class DraftStore {
        ORDER BY d.updated_at DESC, d.created_at DESC
        LIMIT 1`
     ).get(userId, supplier) as DraftRow | undefined;
-    return row ? this.getDraft(row.id, userId) : null;
+    if (!row) return null;
+    const fullDraft = this.getDraft(row.id, userId);
+    const supplierProducts = fullDraft.products.filter((p) => p.supplier === supplier);
+    return {
+      draft: { ...fullDraft.draft, totalProducts: supplierProducts.length },
+      products: supplierProducts,
+    };
   }
 
   hasProducts(userId: string): boolean {
@@ -320,6 +328,102 @@ export class DraftStore {
 
   markInitializationComplete(userId: string): void {
     this.database.prepare("INSERT OR REPLACE INTO app_state (key, value, user_id) VALUES ('initial_seed_completed', 'true', ?)").run(userId);
+  }
+
+  // ── App runtime version auto-increment (VIC-23) ─────────────────────
+
+  getAppState(key: string): string | null {
+    const row = this.database.prepare("SELECT value FROM app_state WHERE key = ? AND user_id IS NULL").get(key) as { value: string } | undefined;
+    return row?.value ?? null;
+  }
+
+  setAppState(key: string, value: string): void {
+    this.database.prepare("INSERT OR REPLACE INTO app_state (key, value, user_id) VALUES (?, ?, NULL)").run(key, value);
+  }
+
+  /**
+   * VIC-23: Resolve the current git commit hash. Tries `git rev-parse HEAD`
+   * first; falls back to reading a build-time injected fingerprint file
+   * (written by the Dockerfile at build time when git is unavailable
+   * at runtime, e.g. in the Docker image).
+   */
+  resolveGitCommit(): string | null {
+    // 1. Try git rev-parse HEAD (local dev, or containers with git installed)
+    try {
+      const hash = execFileSync('git', ['rev-parse', 'HEAD'], {
+        timeout: 5_000,
+        encoding: 'utf8',
+        stdio: ['ignore', 'pipe', 'ignore'],
+      }).trim();
+      if (hash && hash.length >= 7) return hash;
+    } catch {
+      // git not available — fall through to build-commit file
+    }
+    // 2. Fallback: build-time inject file (Docker runtime)
+    const fingerprintFiles = [
+      path.resolve(process.cwd(), '.build-commit'),
+      '/app/.build-commit',
+    ];
+    for (const file of fingerprintFiles) {
+      try {
+        if (fs.existsSync(file)) {
+          const content = fs.readFileSync(file, 'utf8').trim();
+          if (content && content !== 'unknown') return content;
+        }
+      } catch {
+        // file not readable — try next
+      }
+    }
+    // 3. Fallback: env var
+    const envHash = process.env.APP_BUILD_COMMIT;
+    if (envHash && envHash !== 'unknown') return envHash;
+    return null;
+  }
+
+  /**
+   * VIC-23: Compute the runtime version. On first call (no stored commit),
+   * the version starts at the `APP_VERSION` env value. On each subsequent
+   * startup where the git commit hash differs from the stored one, the patch
+   * segment (third number) is incremented by 1. The version and commit hash
+   * are persisted in the `app_state` table so they survive restarts.
+   *
+   * The returned runtime version is the canonical version served by
+   * `/api/health` and `/api/ready` (the caller should set `config.appVersion`
+   * to the return value).
+   */
+  computeRuntimeVersion(baseVersion: string, gitCommit: string | null): string {
+    const storedCommit = this.getAppState('app_last_commit');
+    const storedVersion = this.getAppState('app_runtime_version');
+
+    // If git is unavailable and no stored version, fall back to baseVersion
+    const commitChanged = gitCommit && (!storedCommit || storedCommit !== gitCommit);
+
+    if (!commitChanged) {
+      // Unchanged code — return stored version (or baseVersion if first startup)
+      return storedVersion ?? baseVersion;
+    }
+
+    // Code has changed (new commit) — increment the patch segment
+    let version: string;
+    if (storedVersion) {
+      // Parse stored version and increment patch
+      const parts = storedVersion.split('.').map(Number);
+      if (parts.length >= 3 && !parts.slice(0, 3).some(Number.isNaN)) {
+        parts[2] += 1;
+        version = parts.slice(0, 3).join('.');
+      } else {
+        version = storedVersion; // can't parse — don't guess
+      }
+    } else {
+      // First startup with this commit — use baseVersion as-is
+      version = baseVersion;
+    }
+
+    // Persist the new version + commit
+    this.setAppState('app_runtime_version', version);
+    this.setAppState('app_last_commit', gitCommit!);
+
+    return version;
   }
 
   getOwnedImageFilenames(userId: string): string[] {

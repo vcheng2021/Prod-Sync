@@ -151,6 +151,15 @@ export const retrieveProduct = (draftId: string, productId: string): Promise<Pro
 export const downloadProductImage = (draftId: string, productId: string): Promise<ProductDraft> =>
   requestJson<ProductDraft>(`/api/drafts/${draftId}/products/${productId}/images`, { method: 'POST' });
 
+// VIC-24: Batch image download — downloads images for multiple visible products
+// in parallel (concurrency controlled server-side via config.imageDownloadConcurrency).
+export const downloadProductImages = (draftId: string, productIds: string[]): Promise<ProductDraft[]> =>
+  requestJson<ProductDraft[]>(`/api/drafts/${draftId}/products/images/batch`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ productIds }),
+  });
+
 export const publishProducts = (draftId: string, productIds: string[], changes: Array<{ id: string; changes: Partial<ProductDraft> }> = [], globalCollectionIds: string[] = [], globalCategoryIds: string[] = []): Promise<{ results: Array<{ productId: string; status: PublishStatus; error: string }>; draft: DraftResponse }> =>
   requestJson(`/api/drafts/${draftId}/publish`, {
     method: 'POST',

@@ -198,6 +198,56 @@ export const createImportRouter = (store: DraftStore, logger: AppLogger): Router
     }
   });
 
+  // VIC-24: Batch image download endpoint — downloads images for multiple
+  // products in parallel (up to config.imageDownloadConcurrency at a time).
+  // Applies to all specified products regardless of selection state.
+  router.post('/api/drafts/:draftId/products/images/batch', async (request, response, next) => {
+    try {
+      const { productIds } = request.body as { productIds: string[] }
+      if (!Array.isArray(productIds)) return response.status(400).json({ error: 'productIds array is required.' })
+
+      const draft = store.getDraft(request.params.draftId, request.userId!)
+      const productMap = new Map(draft.products.map((p) => [p.id, p]))
+
+      // Filter to products that actually need download
+      const needsDownload = productIds.filter(
+        (id) => {
+          const p = productMap.get(id)
+          return p && p.imageUrl && p.imageStatus !== 'valid' && !p.imageLocalUrl
+        },
+      )
+
+      if (needsDownload.length === 0) return response.json({ products: draft.products })
+
+      logger.write('product.images.batch', 'info', { draftId: request.params.draftId, requested: productIds.length, toDownload: needsDownload.length })
+
+      // Process downloads with configurable concurrency
+      const concurrency = Math.max(1, config.imageDownloadConcurrency)
+      for (let i = 0; i < needsDownload.length; i += concurrency) {
+        const batch = needsDownload.slice(i, i + concurrency)
+        await Promise.all(
+          batch.map(async (id) => {
+            try {
+              const product = productMap.get(id)!
+              const result = await downloadProductImage(product.imageUrl!, product.id)
+              store.saveImageResult(request.params.draftId, request.userId!, product.id, result)
+              logger.write('product.image', result.status === 'valid' ? 'success' : 'failure', { draftId: request.params.draftId, productId: product.id, status: result.status, error: result.error })
+            } catch (error) {
+              logger.write('product.image', 'failure', { draftId: request.params.draftId, productId: id, error: error instanceof Error ? error.message : String(error) })
+            }
+          }),
+        )
+      }
+
+      // Re-fetch the updated draft
+      const updated = store.getDraft(request.params.draftId, request.userId!)
+      return response.json(updated.products)
+    } catch (error) {
+      logger.write('product.images.batch', 'failure', { draftId: request.params.draftId, error: error instanceof Error ? error.message : 'Batch image download failed.' })
+      return next(error)
+    }
+  });
+
   router.post('/api/drafts/:draftId/products/:productId/refresh', async (request, response, next) => {
     try {
       const product = store.getDraft(request.params.draftId, request.userId!).products.find((entry) => entry.id === request.params.productId);

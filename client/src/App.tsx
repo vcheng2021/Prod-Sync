@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import type { ChangeEvent } from 'react'
+import type { ChangeEvent, Dispatch, SetStateAction } from 'react'
 import {
   exportDraftUrl,
   getIssueLog,
@@ -15,6 +15,7 @@ import {
   purgeDatabase,
   registerUser,
   downloadProductImage,
+  downloadProductImages,
   retrieveProduct,
   saveProducts,
   updateProduct,
@@ -389,6 +390,169 @@ function BackgroundSettings() {
   )
 }
 
+interface RichTextEditorProps {
+  label: string
+  field: string
+  productId: string
+  value: string
+  isDirty: boolean
+  setDirtyFields: Dispatch<SetStateAction<Record<string, Partial<ProductDraft>>>>
+  placeholder?: string
+}
+
+const headingOptions = [
+  { value: 'paragraph', label: 'Paragraph' },
+  { value: 'h1', label: 'H1' },
+  { value: 'h2', label: 'H2' },
+  { value: 'h3', label: 'H3' },
+] as const
+
+function RichTextEditor({ label, field, productId, value, isDirty, setDirtyFields, placeholder = 'Type here…' }: RichTextEditorProps) {
+  const editorRef = useRef<HTMLDivElement | null>(null)
+  const committedHtmlRef = useRef<string>('')
+  const isFocusedRef = useRef(false)
+
+  // Sync external state into the editor without disrupting focus.
+  // While the user is typing, onInput updates committedHtmlRef (a ref, not
+  // state) so React never re-renders the contentEditable mid-stroke.
+  useEffect(() => {
+    const editor = editorRef.current
+    if (!editor) return
+    if (isFocusedRef.current) return
+    if (value !== committedHtmlRef.current) {
+      editor.innerHTML = value
+      committedHtmlRef.current = value
+    }
+  }, [productId, value])
+
+  const execFormat = (command: string, commandValue?: string) => {
+    document.execCommand(command, false, commandValue)
+    const editor = editorRef.current
+    if (editor) {
+      committedHtmlRef.current = editor.innerHTML
+      // Toolbar buttons use onMouseDown={e => e.preventDefault()} to keep
+      // focus in the editor, so a synchronous dirty-field update is safe.
+      setDirtyFields((current) => ({
+        ...current,
+        [productId]: {
+          ...(current[productId] ?? {}),
+          [field]: editor.innerHTML,
+        },
+      }))
+    }
+  }
+
+  const insertImage = () => {
+    const url = window.prompt('Enter image URL:')
+    if (url) execFormat('insertImage', url)
+  }
+
+  const changeHeading = (e: ChangeEvent<HTMLSelectElement>) => {
+    const tag = e.target.value
+    execFormat('formatBlock', tag === 'paragraph' ? '<p>' : `<${tag}>`)
+    e.target.value = 'paragraph'
+  }
+
+  const insertInlineCode = () => {
+    const selection = window.getSelection()
+    if (!selection || selection.rangeCount === 0) return
+    const text = selection.toString()
+    if (!text) return
+    execFormat('insertHTML', `<code>${text}</code>`)
+  }
+
+  const insertBlock = (tag: string) => {
+    execFormat('formatBlock', `<${tag}>`)
+  }
+
+  // VIC-20: Use a <div> instead of <label> here. A <label> wraps both the
+  // toolbar buttons (labelable descendants) and the contentEditable editor.
+  // Clicking the editor triggers the label's activation behavior, which
+  // dispatches a synthetic click on the first labelable descendant (the Bold
+  // button), immediately stealing focus from the contentEditable div. A <div>
+  // has no such behavior, so clicks on the editor stay in the editor.
+  return (
+    <div className={`field ${isDirty ? 'dirty' : ''}`}>
+      <span>{label}</span>
+      <div className={`rich-text-editor ${isDirty ? 'dirty' : ''}`}>
+        <div className="rich-text-toolbar">
+          <button type="button" className="rtb-btn" onMouseDown={(e) => e.preventDefault()} onClick={() => execFormat('undo')} title="Undo">↶</button>
+          <button type="button" className="rtb-btn" onMouseDown={(e) => e.preventDefault()} onClick={() => execFormat('redo')} title="Redo">↷</button>
+          <span className="rtb-sep" />
+          <select
+            className="rtb-select"
+            defaultValue="paragraph"
+            onMouseDown={(e) => e.preventDefault()}
+            onChange={changeHeading}
+            title="Block style"
+          >
+            {headingOptions.map((opt) => (
+              <option key={opt.value} value={opt.value}>{opt.label}</option>
+            ))}
+          </select>
+          <span className="rtb-sep" />
+          <button type="button" className="rtb-btn" onMouseDown={(e) => e.preventDefault()} onClick={() => execFormat('bold')} title="Bold"><b>B</b></button>
+          <button type="button" className="rtb-btn" onMouseDown={(e) => e.preventDefault()} onClick={() => execFormat('italic')} title="Italic"><i>I</i></button>
+          <button type="button" className="rtb-btn" onMouseDown={(e) => e.preventDefault()} onClick={() => execFormat('underline')} title="Underline"><u>U</u></button>
+          <button type="button" className="rtb-btn" onMouseDown={(e) => e.preventDefault()} onClick={() => execFormat('strikeThrough')} title="Strikethrough"><s>S</s></button>
+          <button type="button" className="rtb-btn" onMouseDown={(e) => e.preventDefault()} onClick={insertInlineCode} title="Inline code"><code>{`{}`}</code></button>
+          <span className="rtb-sep" />
+          <button type="button" className="rtb-btn" onMouseDown={(e) => e.preventDefault()} onClick={() => execFormat('insertUnorderedList')} title="Bullet list">•≡</button>
+          <button type="button" className="rtb-btn" onMouseDown={(e) => e.preventDefault()} onClick={() => execFormat('insertOrderedList')} title="Numbered list">1.</button>
+          <button type="button" className="rtb-btn" onMouseDown={(e) => e.preventDefault()} onClick={() => insertBlock('blockquote')} title="Blockquote">“”</button>
+          <button type="button" className="rtb-btn" onMouseDown={(e) => e.preventDefault()} onClick={() => insertBlock('pre')} title="Code block">≣</button>
+          <button type="button" className="rtb-btn" onMouseDown={(e) => e.preventDefault()} onClick={() => execFormat('insertHorizontalRule')} title="Horizontal rule">―</button>
+          <span className="rtb-sep" />
+          <button type="button" className="rtb-btn" onMouseDown={(e) => e.preventDefault()} onClick={() => execFormat('justifyLeft')} title="Align left">←</button>
+          <button type="button" className="rtb-btn" onMouseDown={(e) => e.preventDefault()} onClick={() => execFormat('justifyCenter')} title="Align center">≡</button>
+          <button type="button" className="rtb-btn" onMouseDown={(e) => e.preventDefault()} onClick={() => execFormat('justifyRight')} title="Align right">→</button>
+          <span className="rtb-sep" />
+          <button type="button" className="rtb-btn" onMouseDown={(e) => e.preventDefault()} onClick={() => execFormat('createLink', 'https://')} title="Link">🔗</button>
+          <button type="button" className="rtb-btn" onMouseDown={(e) => e.preventDefault()} onClick={insertImage} title="Insert image">🖼</button>
+          <span className="rtb-sep" />
+          <button type="button" className="rtb-btn" onMouseDown={(e) => e.preventDefault()} onClick={() => execFormat('removeFormat')} title="Clear formatting">✕</button>
+        </div>
+        <div
+          ref={editorRef}
+          className="rich-text-area"
+          contentEditable="true"
+          suppressContentEditableWarning
+          data-placeholder={placeholder}
+          tabIndex={0}
+          onFocus={() => { isFocusedRef.current = true }}
+          onBlur={() => {
+            isFocusedRef.current = false
+            const editor = editorRef.current
+            if (editor && committedHtmlRef.current !== editor.innerHTML) {
+              committedHtmlRef.current = editor.innerHTML
+              setDirtyFields((current) => ({
+                ...current,
+                [productId]: {
+                  ...(current[productId] ?? {}),
+                  [field]: editor.innerHTML,
+                },
+              }))
+            }
+          }}
+          onInput={() => {
+            const editor = editorRef.current
+            if (editor) {
+              committedHtmlRef.current = editor.innerHTML
+              setDirtyFields((current) => ({
+                ...current,
+                [productId]: {
+                  ...(current[productId] ?? {}),
+                  [field]: editor.innerHTML,
+                },
+              }))
+            }
+          }}
+        />
+      </div>
+    </div>
+  )
+}
+
 function AppContent() {
   const { showToast } = useToast()
   const [draft, setDraft] = useState<DraftResponse | null>(null)
@@ -402,16 +566,6 @@ function AppContent() {
   const [activeProductId, setActiveProductId] = useState<string | null>(null)
   const [browsingProductId, setBrowsingProductId] = useState<string | null>(null)
   const browserWindowRef = useRef<Window | null>(null)
-  // VIC-20 Issue: descriptionHtml rich-text editor needs a ref so we can set
-  // content without dangerouslySetInnerHTML (which fights with contentEditable
-  // on every React re-render and makes the editor un-clickable). During typing
-  // we only update dirty fields — NOT setDraft — so the contentEditable div is
-  // never re-rendered mid-stroke. The committedHtmlRef tracks what React last
-  // wrote to the DOM so we only sync when an external source (retrieve, save,
-  // product switch) changes the description.
-  const descriptionEditorRef = useRef<HTMLDivElement | null>(null)
-  const committedHtmlRef = useRef<string>('')
-  const isDescriptionFocusedRef = useRef(false)
   const [busy, setBusy] = useState(false)
   const [publishing, setPublishing] = useState(false)
   const [saving, setSaving] = useState(false)
@@ -425,6 +579,9 @@ function AppContent() {
   // VIC-20 Issue 7: Image download state used by the explicit Download image
   // button for retries (images are also auto-downloaded during Retrieve source data).
   const [downloadingImageId, setDownloadingImageId] = useState<string | null>(null)
+  // VIC-24: Auto-download images for visible products without user interaction.
+  const [autoDownloadingIds, setAutoDownloadingIds] = useState<Set<string>>(new Set())
+  const imageCheckedIdsRef = useRef(new Set<string>())
   const [issuesOpen, setIssuesOpen] = useState(false)
   const [issuesLoading, setIssuesLoading] = useState(false)
   const [logIssues, setLogIssues] = useState<LogIssue[]>([])
@@ -441,8 +598,9 @@ function AppContent() {
   const [authError, setAuthError] = useState('')
   const [authMode, setAuthMode] = useState<'login' | 'register'>('login')
   const [authLoading, setAuthLoading] = useState(false)
-  const [supplier, setSupplier] = useState<'cellar' | 'vican'>('cellar')
-  const [pendingSupplier, setPendingSupplier] = useState<'cellar' | 'vican' | null>(null)
+  const [showPassword, setShowPassword] = useState(false)
+  const [supplier, setSupplier] = useState<'cellar' | 'vican' | ''>('')
+  const [pendingSupplier, setPendingSupplier] = useState<'cellar' | 'vican' | '' | null>(null)
 
   const activeProduct =
     draft?.products.find((product) => product.id === activeProductId) ??
@@ -452,24 +610,6 @@ function AppContent() {
 
   const dirtyFieldsFor = (productId: string): Partial<ProductDraft> =>
     dirtyFields[productId] ?? {}
-
-  // Sync the contentEditable description editor's HTML from React state, but
-  // only when the editor does NOT have focus. While the user is typing, the
-  // onInput handler updates React state; this effect would otherwise reset the
-  // DOM (cursor, selection, typed characters) via innerHTML.
-  useEffect(() => {
-    const editor = descriptionEditorRef.current
-    if (!editor) return
-    // Don't touch the DOM while the user is actively editing
-    if (isDescriptionFocusedRef.current) return
-    const newValue = activeProduct?.descriptionHtml ?? ''
-    // Only write when the value actually changed (e.g. product switch,
-    // retrieve, or save) — not on every keystroke during typing
-    if (newValue !== committedHtmlRef.current) {
-      editor.innerHTML = newValue
-      committedHtmlRef.current = newValue
-    }
-  }, [activeProduct?.id, activeProduct?.descriptionHtml])
 
   // ── Startup: load catalog + Shopify readiness ──
   useEffect(() => {
@@ -496,22 +636,8 @@ function AppContent() {
       }
     }
     void checkSession()
-    void getCurrentDraft()
-      .then((currentDraft) => {
-        if (!mounted) return
-        if (currentDraft) {
-          setDraft(currentDraft)
-          setActiveProductId(currentDraft.products[0]?.id ?? null)
-          showToast('info', `${currentDraft.products.length.toLocaleString()} products restored from SQLite.`)
-        }
-        setStartupLoading(false)
-      })
-      .catch((requestError: unknown) => {
-        if (mounted) {
-          showToast('error', requestError instanceof Error ? requestError.message : 'The saved catalog could not be loaded.')
-          setStartupLoading(false)
-        }
-      })
+    // VIC-23: Do NOT auto-load a draft on startup. Only get readiness (version + config).
+    // Draft loading is deferred until the user selects a supplier and clicks Apply.
     void getReadiness()
       .then((status) => {
         if (mounted) setReadiness(status)
@@ -635,6 +761,52 @@ function AppContent() {
     page * PAGE_SIZE,
   )
   const browsingProduct = visibleProducts.find((p) => p.id === browsingProductId) ?? null
+
+  // VIC-24: Auto-download images for visible products that lack a local image.
+  // Runs when the visible page changes (pagination, filter, etc.) or when
+  // a new draft is loaded. Products already in imageCheckedIdsRef are skipped
+  // to avoid redundant downloads when navigating back to a previously-viewed page.
+  useEffect(() => {
+    if (!draft?.draft) return
+    const needsDownload = visibleProducts.filter(
+      (p) =>
+        p.imageUrl &&
+        p.imageStatus !== 'valid' &&
+        !p.imageLocalUrl &&
+        !imageCheckedIdsRef.current.has(p.id),
+    )
+    if (needsDownload.length === 0) return
+
+    // Mark these IDs as checked immediately to prevent duplicate triggers
+    needsDownload.forEach((p) => imageCheckedIdsRef.current.add(p.id))
+    setAutoDownloadingIds(new Set(needsDownload.map((p) => p.id)))
+
+    const draftId = draft.draft.id
+    void downloadProductImages(draftId, needsDownload.map((p) => p.id))
+      .then((updatedProducts) => {
+        // Merge updated products into the draft
+        const updatedMap = new Map(updatedProducts.map((p) => [p.id, p]))
+        setDraft((prev) => {
+          if (!prev) return prev
+          return {
+            ...prev,
+            products: prev.products.map((p) => updatedMap.get(p.id) ?? p),
+          }
+        })
+      })
+      .catch((error: unknown) => {
+        showToast('error', error instanceof Error ? error.message : 'Some product images could not be downloaded automatically.')
+      })
+      .finally(() => {
+        setAutoDownloadingIds(new Set())
+      })
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [visibleProducts.map((p) => p.id).join(','), draft?.draft?.id])
+
+  // Clear the image-checked tracking set when the draft changes
+  useEffect(() => {
+    imageCheckedIdsRef.current.clear()
+  }, [draft?.draft?.id])
 
   const selectedProducts = draft?.products.filter((product) => product.selected) ?? []
   const validSelectedProducts = selectedProducts.filter(
@@ -887,7 +1059,7 @@ function AppContent() {
   }
 
   const handleRetrieve = async (product: ProductDraft) => {
-    if (!draft || !product.selected || !product.sourceUrl) return
+    if (!draft || !product.sourceUrl) return
     setActiveProductId(product.id)
     setRetrievingProductId(product.id)
     setBusy(true)
@@ -1119,124 +1291,6 @@ function AppContent() {
     )
   }
 
-  const execFormat = (command: string, value?: string) => {
-    document.execCommand(command, false, value)
-    const editor = descriptionEditorRef.current
-    if (editor && activeProduct) {
-      committedHtmlRef.current = editor.innerHTML
-      // Toolbar buttons use onMouseDown={e => e.preventDefault()} to keep
-      // focus in the editor, so a synchronous dirty-field update is safe.
-      setDirtyFields((current) => ({
-        ...current,
-        [activeProduct.id]: {
-          ...(current[activeProduct.id] ?? {}),
-          descriptionHtml: editor.innerHTML,
-        },
-      }))
-    }
-  }
-
-  const insertImage = () => {
-    const url = window.prompt('Enter image URL:')
-    if (url) execFormat('insertImage', url)
-  }
-
-  const renderRichTextInput = (
-    label: string,
-  ) => {
-    const isDirty = activeProduct && 'descriptionHtml' in (dirtyFieldsFor(activeProduct.id) ?? {})
-    // VIC-20: Use a <div> instead of <label> here. A <label> wraps both the
-    // toolbar buttons (labelable descendants) and the contentEditable editor.
-    // Clicking the editor triggers the label's activation behavior, which
-    // dispatches a synthetic click on the first labelable descendant (the Bold
-    // button), immediately stealing focus from the contentEditable div. A <div>
-    // has no such behavior, so clicks on the editor stay in the editor.
-    return (
-      <div className={`field ${isDirty ? 'dirty' : ''}`}>
-        <span>{label}</span>
-        <div className={`rich-text-editor ${isDirty ? 'dirty' : ''}`}>
-          <div className="rich-text-toolbar">
-            <button type="button" className="rtb-btn" onMouseDown={(e) => e.preventDefault()} onClick={() => execFormat('bold')} title="Bold"><b>B</b></button>
-            <button type="button" className="rtb-btn" onMouseDown={(e) => e.preventDefault()} onClick={() => execFormat('italic')} title="Italic"><i>I</i></button>
-            <button type="button" className="rtb-btn" onMouseDown={(e) => e.preventDefault()} onClick={() => execFormat('underline')} title="Underline"><u>U</u></button>
-            <span className="rtb-sep" />
-            <button type="button" className="rtb-btn" onMouseDown={(e) => e.preventDefault()} onClick={() => execFormat('insertUnorderedList')} title="Bullet list">•≡</button>
-            <button type="button" className="rtb-btn" onMouseDown={(e) => e.preventDefault()} onClick={() => execFormat('insertOrderedList')} title="Numbered list">1.</button>
-            <span className="rtb-sep" />
-            <button type="button" className="rtb-btn" onMouseDown={(e) => e.preventDefault()} onClick={() => execFormat('createLink', 'https://')} title="Link">🔗</button>
-            <button type="button" className="rtb-btn" onMouseDown={(e) => e.preventDefault()} onClick={insertImage} title="Insert image">🖼</button>
-            <span className="rtb-sep" />
-            <button type="button" className="rtb-btn" onMouseDown={(e) => e.preventDefault()} onClick={() => execFormat('removeFormat')} title="Clear formatting">✕</button>
-          </div>
-          <div
-            ref={descriptionEditorRef}
-            className="rich-text-area"
-            contentEditable="true"
-            suppressContentEditableWarning
-            data-placeholder="Fetched description or your own copy"
-            tabIndex={0}
-            onFocus={() => { isDescriptionFocusedRef.current = true }}
-            onBlur={() => {
-              isDescriptionFocusedRef.current = false
-              // Sync the final HTML to dirty fields only after the user
-              // finishes editing. Updating state on every keystroke re-renders
-              // AppContent in React 19, which can disrupt the contentEditable
-              // cursor/focus.
-              const editor = descriptionEditorRef.current
-              if (editor && activeProduct) {
-                setDirtyFields((current) => ({
-                  ...current,
-                  [activeProduct.id]: {
-                    ...(current[activeProduct.id] ?? {}),
-                    descriptionHtml: editor.innerHTML,
-                  },
-                }))
-              }
-            }}
-            onInput={() => {
-              // Only track the committed HTML in a ref — do NOT call
-              // setDirtyFields here. Any state update triggers a re-render
-              // of AppContent, which in React 19 can disrupt the
-              // contentEditable's native cursor and focus.
-              const editor = descriptionEditorRef.current
-              if (editor) {
-                committedHtmlRef.current = editor.innerHTML
-              }
-            }}
-          />
-        </div>
-      </div>
-    )
-  }
-
-  const renderTextInput = (
-    label: string,
-    field: keyof ProductDraft,
-    value: string,
-    isTextarea = false,
-  ) => {
-    const isDirty =
-      activeProduct && field in (dirtyFieldsFor(activeProduct.id) ?? {})
-    if (field === 'descriptionHtml' && isTextarea) {
-      return renderRichTextInput(label)
-    }
-    const commonProps = {
-      value: value ?? '',
-      onChange: (event: ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) =>
-        patchProduct(activeProduct!.id, { [field]: event.target.value } as Partial<ProductDraft>),
-    }
-    return (
-      <label className={`field ${isDirty ? 'dirty' : ''}`}>
-        <span>{label}</span>
-        {isTextarea ? (
-          <textarea rows={6} {...commonProps} placeholder="Fetched description or your own copy" />
-        ) : (
-          <input {...commonProps} />
-        )}
-      </label>
-    )
-  }
-
   const renderReadOnlyNumberInput = (label: string, value: number | null) => {
     return (
       <label className="field readonly">
@@ -1274,13 +1328,26 @@ function AppContent() {
             </label>
             <label className="field">
               <span>Password</span>
-              <input
-                type="password"
-                value={password}
-                onChange={(event) => setPassword(event.target.value)}
-                placeholder="Enter password"
-                autoComplete="current-password"
-              />
+              <div style={{ position: 'relative', display: 'flex', alignItems: 'flex-end', gap: 4 }}>
+                <input
+                  type={showPassword ? 'text' : 'password'}
+                  value={password}
+                  onChange={(event) => setPassword(event.target.value)}
+                  placeholder="Enter password"
+                  autoComplete="current-password"
+                  style={{ flex: 1 }}
+                />
+                <button
+                  type="button"
+                  className="button button-quiet"
+                  style={{ padding: '2px 6px', fontSize: 11, minHeight: 'auto' }}
+                  onClick={() => setShowPassword((v) => !v)}
+                  aria-label={showPassword ? 'Hide password' : 'Show password'}
+                  title={showPassword ? 'Hide password' : 'Show password'}
+                >
+                  {showPassword ? '👁️' : '👁️‍🗨️'}
+                </button>
+              </div>
             </label>
             <div className="modal-actions">
               {authMode === 'login' ? (
@@ -1335,25 +1402,33 @@ function AppContent() {
           <div className="header-actions">
             <label className="supplier-select">
               <span>Supplier</span>
-              <select
-                value={pendingSupplier ?? supplier}
-                onChange={(e) => setPendingSupplier(e.target.value as 'cellar' | 'vican' | null)}
-              >
-                <option value="cellar">Cellar Drive</option>
-                <option value="vican">Vican Visions</option>
-              </select>
-              {pendingSupplier && pendingSupplier !== supplier && (
-                <span className="supplier-actions">
-                  <button type="button" className="button button-primary" style={{ display: 'inline-block', padding: '4px 8px', fontSize: '11px', marginLeft: '4px' }} onClick={() => {
-                    void handleSupplierSwitch(pendingSupplier!);
+              <div className="supplier-row">
+                <select
+                  value={pendingSupplier ?? supplier}
+                  onChange={(e) => {
+                    const val = e.target.value as 'cellar' | 'vican' | ''
+                    setPendingSupplier(val)
+                  }}
+                >
+                  <option value="">— select supplier —</option>
+                  <option value="cellar">Cellar Drive</option>
+                  <option value="vican">Vican Visions</option>
+                </select>
+              <span className="supplier-actions">
+                <button type="button" className="button button-primary" style={{ fontSize: 11 }}
+                  disabled={!pendingSupplier || pendingSupplier === ''}
+                  onClick={() => {
+                    void handleSupplierSwitch((pendingSupplier ?? null) as 'cellar' | 'vican');
                   }}>
-                    Apply
-                  </button>
-                  <button type="button" className="button button-quiet" style={{ display: 'inline-block', padding: '4px 8px', fontSize: '11px', marginLeft: '4px' }} onClick={() => setPendingSupplier(null)}>
-                    Cancel
-                  </button>
-                </span>
-              )}
+                  Apply
+                </button>
+                <button type="button" className="button button-quiet" style={{ fontSize: 11 }}
+                  disabled={!pendingSupplier || pendingSupplier === ''}
+                  onClick={() => setPendingSupplier(null)}>
+                  Cancel
+                </button>
+              </span>
+              </div>
             </label>
             <ThemeToggle />
             <BackgroundSettings />
@@ -1391,30 +1466,45 @@ function AppContent() {
         </header>
         <section className="import-hero">
           <div className="eyebrow">SUPPLIER PRODUCT DESK / 01</div>
-          <h1 className="page-title">{supplier === 'vican' ? 'Vican Visions (AliExpress) product update' : 'Cellar Drive product update'}</h1>
+          <h1 className="page-title">
+            {supplier === ''
+              ? 'Select a supplier to begin'
+              : supplier === 'vican'
+                ? 'Vican Visions (AliExpress) product update'
+                : 'Cellar Drive product update'}
+          </h1>
           <p className="hero-copy">
-            Load a workbook, enrich each row from its source page, make the edits that
-            matter, then post only the products you approve.
+            {supplier === ''
+              ? 'Choose a supplier from the dropdown above, then upload a workbook to get started.'
+              : 'Load a workbook, enrich each row from its source page, make the edits that matter, then post only the products you approve.'}
           </p>
-          <label className={`upload-zone ${busy ? 'is-busy' : ''}`}>
+          <label className={`upload-zone ${busy ? 'is-busy' : ''} ${supplier === '' ? 'is-disabled' : ''}`}>
             <input
               type="file"
               accept=".xlsx"
-              disabled={busy}
+              disabled={busy || supplier === ''}
               onChange={(event) => {
                 const file = event.target.files?.[0]
                 if (file) void handleImport(file)
               }}
             />
             <span className="upload-kicker">
-              {startupLoading ? 'LOADING SAVED CATALOG' : busy ? 'PROCESSING WORKBOOK' : 'DROP OR CHOOSE XLSX'}
+              {supplier === ''
+                ? 'SELECT A SUPPLIER FIRST'
+                : startupLoading
+                  ? 'LOADING SAVED CATALOG'
+                  : busy
+                    ? 'PROCESSING WORKBOOK'
+                    : 'DROP OR CHOOSE XLSX'}
             </span>
             <strong>
-              {startupLoading
-                ? 'Restoring your product workspace...'
-                : busy
-                  ? 'Merging workbook into SQLite...'
-                  : 'Upload supplier workbook'}
+              {supplier === ''
+                ? 'No supplier selected'
+                : startupLoading
+                  ? 'Restoring your product workspace...'
+                  : busy
+                    ? 'Merging workbook into SQLite...'
+                    : 'Upload supplier workbook'}
             </strong>
             <span>
               Check a row, then choose when its source page details and its
@@ -1455,25 +1545,33 @@ function AppContent() {
         <div className="header-actions">
           <label className="supplier-select">
             <span>Supplier</span>
+            <div className="supplier-row">
             <select
               value={pendingSupplier ?? supplier}
-              onChange={(e) => setPendingSupplier(e.target.value as 'cellar' | 'vican' | null)}
+              onChange={(e) => {
+                const val = e.target.value as 'cellar' | 'vican' | ''
+                setPendingSupplier(val)
+              }}
             >
+              <option value="">— select supplier —</option>
               <option value="cellar">Cellar Drive</option>
               <option value="vican">Vican Visions</option>
             </select>
-            {pendingSupplier && pendingSupplier !== supplier && (
-              <span style={{ marginLeft: 8, display: 'inline-flex', gap: 6, alignItems: 'center' }}>
-                <button type="button" className="button button-primary" style={{ fontSize: 11, padding: '4px 8px', height: 'auto' }} onClick={() => {
-                    void handleSupplierSwitch(pendingSupplier!);
+              <span className="supplier-actions">
+                <button type="button" className="button button-primary" style={{ fontSize: 11 }}
+                  disabled={!pendingSupplier || pendingSupplier === ''}
+                  onClick={() => {
+                    void handleSupplierSwitch((pendingSupplier ?? null) as 'cellar' | 'vican');
                   }}>
                   Apply
                 </button>
-                <button type="button" className="button button-quiet" style={{ fontSize: 11, padding: '4px 8px', height: 'auto' }} onClick={() => setPendingSupplier(null)}>
+                <button type="button" className="button button-quiet" style={{ fontSize: 11 }}
+                  disabled={!pendingSupplier || pendingSupplier === ''}
+                  onClick={() => setPendingSupplier(null)}>
                   Cancel
                 </button>
               </span>
-            )}
+              </div>
           </label>
           <ThemeToggle />
           <BackgroundSettings />
@@ -1513,14 +1611,6 @@ function AppContent() {
               v{readiness.version}
             </span>
           )}
-          <button
-            type="button"
-            className="button button-primary"
-            disabled={!hasUnsavedChanges || saving}
-            onClick={() => void handleSave()}
-          >
-            {saving ? 'Saving…' : hasUnsavedChanges ? 'Save changes' : 'Saved'}
-          </button>
           <button
             type="button"
             className="button button-quiet"
@@ -1818,6 +1908,8 @@ function AppContent() {
                     <div className="thumb">
                       {product.imageLocalUrl ? (
                         <img src={product.imageLocalUrl} alt="" loading="lazy" />
+                      ) : autoDownloadingIds.has(product.id) ? (
+                        <span className="image-loading">…</span>
                       ) : (
                         <span>{product.imageStatus === 'pending' ? '…' : 'IMG'}</span>
                       )}
@@ -1833,8 +1925,11 @@ function AppContent() {
                                 event.stopPropagation();
                                 if (browserWindowRef.current && !browserWindowRef.current.closed) {
                                   browserWindowRef.current.location.href = product.sourceUrl
+                                  browserWindowRef.current.focus()
                                 } else {
-                                  browserWindowRef.current = window.open(product.sourceUrl, 'ecomint-brower', 'width=1200,height=800,scrollbars=yes,resizable=yes,alwaysOnTop=yes')
+                                  const win = window.open(product.sourceUrl, 'ecomint-brower', 'width=1200,height=800,scrollbars=yes,resizable=yes,alwaysOnTop=yes')
+                                  if (win) win.focus()
+                                  browserWindowRef.current = win
                                 }
                               }}
                               title="Open source page"
@@ -1877,8 +1972,11 @@ function AppContent() {
                               event.stopPropagation()
                               if (browserWindowRef.current && !browserWindowRef.current.closed) {
                                 browserWindowRef.current.location.href = product.sourceUrl
+                                browserWindowRef.current.focus()
                               } else {
-                                browserWindowRef.current = window.open(product.sourceUrl, 'ecomint-brower', 'width=1200,height=800,scrollbars=yes,resizable=yes,alwaysOnTop=yes')
+                                const win = window.open(product.sourceUrl, 'ecomint-brower', 'width=1200,height=800,scrollbars=yes,resizable=yes,alwaysOnTop=yes')
+                                if (win) win.focus()
+                                browserWindowRef.current = win
                               }
                             }}
                           >
@@ -1906,11 +2004,7 @@ function AppContent() {
                     <button
                       type="button"
                       className="row-action"
-                      disabled={
-                        busy ||
-                        !product.selected ||
-                        !product.sourceUrl
-                      }
+                      disabled={busy || !product.sourceUrl}
                       onClick={() => void handleRetrieve(product)}
                     >
                       {retrieveLabel(product)}
@@ -1931,8 +2025,11 @@ function AppContent() {
                         onClick={() => {
                           if (browserWindowRef.current && !browserWindowRef.current.closed) {
                             browserWindowRef.current.location.href = browsingProduct.sourceUrl
+                            browserWindowRef.current.focus()
                           } else {
-                            browserWindowRef.current = window.open(browsingProduct.sourceUrl, 'ecomint-brower', 'width=1200,height=800,scrollbars=yes,resizable=yes,alwaysOnTop=yes')
+                            const win = window.open(browsingProduct.sourceUrl, 'ecomint-brower', 'width=1200,height=800,scrollbars=yes,resizable=yes,alwaysOnTop=yes')
+                            if (win) win.focus()
+                            browserWindowRef.current = win
                           }
                         }}
                       >
@@ -2159,7 +2256,15 @@ function AppContent() {
               <div className="source-line">
                 <span>Source page</span>
                 {activeProduct.sourceUrl ? (
-                  <a href={activeProduct.sourceUrl} target="_blank" rel="noreferrer">
+                  <a
+                    href={activeProduct.sourceUrl}
+                    onClick={(event) => {
+                      event.preventDefault()
+                      const win = window.open(activeProduct.sourceUrl, 'ecomint-source', 'width=1200,height=800,scrollbars=yes,resizable=yes,alwaysOnTop=yes')
+                      if (win) win.focus()
+                    }}
+                    title="Open source page"
+                  >
                     Open source
                   </a>
                 ) : (
@@ -2168,65 +2273,11 @@ function AppContent() {
                 <button
                   type="button"
                   className="text-button"
-                  disabled={
-                    busy ||
-                    !activeProduct.selected ||
-                    !activeProduct.sourceUrl
-                  }
+                  disabled={busy || !activeProduct.sourceUrl}
                   onClick={() => void handleRetrieve(activeProduct)}
                 >
                   {retrieveLabel(activeProduct)}
                 </button>
-              </div>
-
-              <div
-                className={`featured-row ${'featured' in (dirtyFieldsFor(activeProduct.id) ?? {}) || 'publishToOnlineStore' in (dirtyFieldsFor(activeProduct.id) ?? {}) ? 'dirty' : ''}`}
-              >
-                <div className="publish-checkboxes">
-                  <label>
-                    <input
-                      type="checkbox"
-                      checked={activeProduct.featured}
-                      onChange={(event) =>
-                        patchProduct(activeProduct.id, {
-                          featured: event.target.checked,
-                        })
-                      }
-                      aria-label="Flag as featured"
-                    />
-                    <span>Featured</span>
-                  </label>
-                  <label>
-                    <input
-                      type="checkbox"
-                      checked={activeProduct.publishToOnlineStore}
-                      onChange={(event) =>
-                        patchProduct(activeProduct.id, {
-                          publishToOnlineStore: event.target.checked,
-                        })
-                      }
-                      aria-label="Publish to Online Store sales channel"
-                    />
-                    <span>Online Store</span>
-                  </label>
-                </div>
-                <small>
-                  When published, the product is added to the Featured Collection
-                  on Shopify.
-                </small>
-                <small>
-                  When checked, the product is published to the Online Store sales
-                  channel on Shopify.
-                </small>
-              </div>
-
-              {/* ── About this product ── */}
-              <div className="about-heading">
-                <div>
-                  <div className="eyebrow">CONTENT BLOCK</div>
-                  <h3>About this product</h3>
-                </div>
-                <span>Editable</span>
               </div>
 
               {activeProduct.enrichmentError && (
@@ -2239,12 +2290,15 @@ function AppContent() {
                 </div>
               )}
 
-              {renderTextInput(
-                'Description',
-                'descriptionHtml',
-                activeProduct.descriptionHtml,
-                true,
-              )}
+              <RichTextEditor
+                label="Description"
+                field="descriptionHtml"
+                productId={activeProduct.id}
+                value={activeProduct.descriptionHtml}
+                isDirty={activeProduct && 'descriptionHtml' in (dirtyFieldsFor(activeProduct.id) ?? {})}
+                setDirtyFields={setDirtyFields}
+                placeholder="Fetched description or your own copy"
+              />
 
               <div className="detail-fields">
                 {(['brand', 'country', 'region', 'productType', 'abv', 'containerType', 'style'] as const)
@@ -2280,13 +2334,16 @@ function AppContent() {
               {/* VIC-17: AliExpress-specific editor sections */}
               {activeProduct.supplier === 'vican' && (
                 <>
-                  {/* Product Attributes (from AliExpress "Specifications" section) */}
-                  {renderTextInput(
-                    'Product Attributes',
-                    'productAttributes',
-                    activeProduct.productAttributes,
-                    true,
-                  )}
+                  {/* Other Attributes (from AliExpress "Specifications" section) */}
+                  <RichTextEditor
+                    label="Other Attributes"
+                    field="productAttributes"
+                    productId={activeProduct.id}
+                    value={activeProduct.productAttributes}
+                    isDirty={activeProduct && 'productAttributes' in (dirtyFieldsFor(activeProduct.id) ?? {})}
+                    setDirtyFields={setDirtyFields}
+                    placeholder="Fetched attributes or your own copy"
+                  />
 
                   {/* Reset AliExpress fields to originally loaded values */}
                   <div className="field-group">
@@ -2423,6 +2480,68 @@ function AppContent() {
                       {globalCategoryIds.length} category{globalCategoryIds.length === 1 ? '' : 's'} selected for the next {selectedProducts.length} checked product{selectedProducts.length === 1 ? '' : 's'}.
                     </small>
                   )}
+                </div>
+              )}
+
+              {/* ── Publish flags (bottom of panel) ── */}
+              <div
+                className={`featured-row ${'featured' in (dirtyFieldsFor(activeProduct.id) ?? {}) || 'publishToOnlineStore' in (dirtyFieldsFor(activeProduct.id) ?? {}) ? 'dirty' : ''}`}
+              >
+                <div className="publish-checkboxes">
+                  <label>
+                    <input
+                      type="checkbox"
+                      checked={activeProduct.featured}
+                      onChange={(event) =>
+                        patchProduct(activeProduct.id, {
+                          featured: event.target.checked,
+                        })
+                      }
+                      aria-label="Flag as featured"
+                    />
+                    <span>Featured</span>
+                  </label>
+                  <label>
+                    <input
+                      type="checkbox"
+                      checked={activeProduct.publishToOnlineStore}
+                      onChange={(event) =>
+                        patchProduct(activeProduct.id, {
+                          publishToOnlineStore: event.target.checked,
+                        })
+                      }
+                      aria-label="Publish to Online Store sales channel"
+                    />
+                    <span>Online Store</span>
+                  </label>
+                </div>
+                <small>
+                  When published, the product is added to the Featured Collection
+                  on Shopify.
+                </small>
+                <small>
+                  When checked, the product is published to the Online Store sales
+                  channel on Shopify.
+                </small>
+              </div>
+
+              {/* ── Save button (bottom of detail panel) ── */}
+              {activeProduct && (
+                <div className="detail-pane-footer">
+                  {hasUnsavedChanges && (
+                    <div className="field-hint">
+                      You have {Object.keys(dirtyFields).length} product
+                      {Object.keys(dirtyFields).length === 1 ? '' : 's'} with unsaved changes.
+                    </div>
+                  )}
+                  <button
+                    type="button"
+                    className="button button-primary"
+                    disabled={!hasUnsavedChanges || saving}
+                    onClick={() => void handleSave()}
+                  >
+                    {saving ? 'Saving…' : hasUnsavedChanges ? 'Save changes' : 'Saved'}
+                  </button>
                 </div>
               )}
             </>
