@@ -273,10 +273,15 @@ export class DraftStore {
         const sourceChanged = existing.source_url !== product.sourceUrl;
         const imageChanged = existing.image_url !== product.imageUrl;
         const unchanged = existing.supplier_product_key === product.supplierProductKey && existing.image_url === product.imageUrl && existing.title === product.title && existing.source_url === product.sourceUrl && existing.stock_on_hand === product.stockOnHand && existing.case_price === product.casePrice && existing.unit_price === product.unitPrice && existing.supplier_type === product.supplierType;
+        // VIC-25: For Vican, workbook values for brand/productType/containerType are supplier-owned
+        // and refreshed on merge. For other suppliers, preserve existing (enrichment) values.
+        const mergeBrand = product.supplier === 'vican' ? product.brand : existing.brand;
+        const mergeProductType = product.supplier === 'vican' ? product.productType : existing.product_type;
+        const mergeContainerType = product.supplier === 'vican' ? product.containerType : existing.container_type;
         updateProduct.run(
           product.rowNumber, product.supplierProductKey, product.imageUrl, JSON.stringify(product.imageUrls ?? []), imageChanged ? '' : existing.image_local_filename, imageChanged ? '' : existing.image_local_url, imageChanged ? product.imageStatus : existing.image_status, product.title, product.sourceUrl,
           product.stockOnHand, product.casePrice, product.unitPrice, suggestedSalePrice, sourceChanged ? existing.description_html : existing.description_html,
-          existing.brand, existing.country, existing.region, existing.product_type, product.supplierType, existing.source_platform ?? '', existing.abv, existing.container_type, existing.style,
+          mergeBrand, existing.country, existing.region, mergeProductType, product.supplierType, existing.source_platform ?? '', existing.abv, mergeContainerType, existing.style,
           sourceChanged ? (product.sourceUrl ? 'pending' : 'not-provided') : existing.enrichment_status, sourceChanged ? '' : existing.enrichment_error,
           sourceChanged ? null : existing.enrichment_fetched_at, JSON.stringify(product.aliexpressImages ?? []), JSON.stringify(product.validationErrors), JSON.stringify(product.raw), product.supplier, existing.id, draftId, userId,
         );
@@ -500,14 +505,31 @@ export class DraftStore {
     const now = new Date().toISOString();
 
     // Determine the original values for AliExpress fields (to keep for reset)
-    const existingProduct = this.database.prepare('SELECT product_attributes, product_description, aliexpress_images, original_product_attributes, original_product_description, selected_image_index FROM products WHERE id = ? AND draft_id = ? AND user_id = ?').get(productId, draftId, userId) as {
+    const existingProduct = this.database.prepare('SELECT product_attributes, product_description, aliexpress_images, original_product_attributes, original_product_description, selected_image_index, supplier, brand, product_type, container_type FROM products WHERE id = ? AND draft_id = ? AND user_id = ?').get(productId, draftId, userId) as {
       product_attributes: string;
       product_description: string;
       aliexpress_images: string;
       original_product_attributes: string;
       original_product_description: string;
       selected_image_index: number | null;
+      supplier: string;
+      brand: string;
+      product_type: string;
+      container_type: string;
     } | undefined;
+
+    // VIC-25: For Vican, preserve workbook-supplied values (supplier-owned) during enrichment.
+    // Enrichment brand/type/category should not overwrite workbook values when non-empty.
+    const isVican = existingProduct?.supplier === 'vican';
+    const enrichmentBrand = isVican && existingProduct && existingProduct.brand
+      ? existingProduct.brand
+      : result.details.brand;
+    const enrichmentProductType = isVican && existingProduct && existingProduct.product_type
+      ? existingProduct.product_type
+      : result.details.productType;
+    const enrichmentContainerType = isVican && existingProduct && existingProduct.container_type
+      ? existingProduct.container_type
+      : result.details.containerType;
 
     // Set original values if not already set (first retrieval)
     const originalAttributes = existingProduct?.original_product_attributes || result.details.productAttributes || '';
@@ -536,12 +558,12 @@ export class DraftStore {
      WHERE id = ? AND draft_id = ? AND user_id = ?`)
       .run(
         result.details.descriptionHtml,
-        result.details.brand,
+        enrichmentBrand,
         result.details.country,
         result.details.region,
-        result.details.productType,
+        enrichmentProductType,
         result.details.abv,
-        result.details.containerType,
+        enrichmentContainerType,
         result.details.style,
         result.status,
         result.error,
@@ -626,7 +648,7 @@ export class DraftStore {
   }
 
   private supplierFingerprint(row: ProductRow): string {
-    return JSON.stringify([row.image_url, row.title, row.source_url, row.stock_on_hand, row.case_price, row.unit_price, row.supplier_type]);
+    return JSON.stringify([row.image_url, row.title, row.source_url, row.stock_on_hand, row.case_price, row.unit_price, row.supplier_type, row.brand, row.product_type, row.container_type]);
   }
 
   private withValidationError(row: ProductRow, message: string): string[] {

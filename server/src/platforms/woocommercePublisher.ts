@@ -443,10 +443,13 @@ export const publishToWooCommerce = async (product: ProductDraft, categoryIds?: 
       images: productImages,
       ...(categoryIds && categoryIds.length ? { categories: categoryIds.map((id) => ({ id: parseInt(id, 10) })) } : {}),
       meta_data: [
-        { key: '_cost_price', value: (product.costPrice ?? 0).toString() },
+        { key: '_cost_price', value: (product.costPrice ?? product.unitPrice ?? 0).toString() },
         { key: '_supplier_type', value: product.supplierType || 'vican' },
-        { key: '_source_platform', value: 'aliexpress' },
+        { key: '_source_platform', value: product.supplier || 'aliexpress' },
         { key: '_unit_price', value: (product.unitPrice ?? 0).toString() },
+        { key: 'product_category', value: product.productType || '' },
+        { key: 'sub_category', value: product.containerType || '' },
+        { key: 'brand', value: product.brand || '' },
       ],
     };
 

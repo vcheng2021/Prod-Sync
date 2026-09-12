@@ -32,7 +32,7 @@ import './workspace.css'
 const PAGE_SIZE = 40
 type StatusFilter = 'all' | 'pending' | 'ready' | 'failed' | 'published'
 type SortOption = 'none' | 'selected' | 'title-asc' | 'title-desc' | 'source' | 'shopify'
-type FilterField = 'title' | 'unitPrice' | 'suggestedSalePrice' | 'casePrice' | 'stockOnHand' | 'inventoryQuantity' | 'supplierType' | 'imageStatus' | 'enrichmentStatus' | 'publishStatus' | 'description'
+type FilterField = 'title' | 'unitPrice' | 'suggestedSalePrice' | 'casePrice' | 'stockOnHand' | 'inventoryQuantity' | 'supplierType' | 'productType' | 'imageStatus' | 'enrichmentStatus' | 'publishStatus' | 'description'
 type FilterKind = 'select' | 'range' | 'text'
 type RangeOperator = '>' | '<' | '>=' | '<=' | '=' | '!='
 
@@ -84,6 +84,7 @@ const filterValue = (product: ProductDraft, field: FilterField): string => {
   if (field === 'stockOnHand') return product.stockOnHand === null ? '—' : String(product.stockOnHand)
   if (field === 'inventoryQuantity') return String(product.inventoryQuantity)
   if (field === 'supplierType') return product.supplierType || '—'
+  if (field === 'productType') return product.productType || '—'
   if (field === 'imageStatus') return statusText[product.imageStatus] ?? product.imageStatus
   if (field === 'enrichmentStatus') return statusText[product.enrichmentStatus] ?? product.enrichmentStatus
   if (field === 'publishStatus') return statusText[product.publishStatus] ?? product.publishStatus
@@ -667,10 +668,19 @@ function AppContent() {
 
   // ── Derived: filter options, filtered products, metrics ──
   // VIC-20 Issue 5: Case price filter is not applicable for vican (no case pricing)
-  const activeFilterConfig = useMemo(
-    () => filterFieldConfig.filter((config) => supplier !== 'vican' || config.field !== 'casePrice'),
-    [supplier],
-  )
+  // VIC-20 Issue 5: Case price filter is not applicable for vican (no case pricing).
+  // VIC-25: For vican, the "Type" filter uses productType (column G / Product Category)
+  // instead of supplierType (which is always "AliExpress"). This makes the Type filter
+  // show distinct product categories for the selected supplier.
+  const activeFilterConfig = useMemo(() => {
+    return filterFieldConfig
+      .filter((config) => supplier !== 'vican' || config.field !== 'casePrice')
+      .map((config) =>
+        supplier === 'vican' && config.field === 'supplierType'
+          ? { ...config, field: 'productType' as FilterField, label: 'Type' }
+          : config,
+      );
+  }, [supplier]);
   const filterOptions = useMemo(() => {
     const products = draft?.products ?? []
     return Object.fromEntries(
@@ -1261,6 +1271,63 @@ function AppContent() {
     }
   }
 
+  // VIC-26: Publish the currently active product as an individual.
+  const handlePublishSingle = async () => {
+    if (!draft || !activeProduct || publishing) return
+    const hasErrors =
+      activeProduct.validationErrors.length > 0 ||
+      activeProduct.suggestedSalePrice === null ||
+      activeProduct.suggestedSalePrice <= 0 ||
+      !Number.isInteger(activeProduct.inventoryQuantity) ||
+      activeProduct.inventoryQuantity < 0
+    if (hasErrors) return showToast('error', 'Product has validation errors. Fix before publishing.')
+    const confirmed = window.confirm(`Publish "${activeProduct.title}" to the store?`)
+    if (!confirmed) return
+    setPublishing(true)
+    try {
+      // Save any pending edits for this product before publishing.
+      const productChanges = dirtyFields[activeProduct.id] ?? {}
+      const publishChanges = [{ id: activeProduct.id, changes: { ...productChanges, selected: true } }]
+      const result = await publishProducts(
+        draft.draft.id,
+        [activeProduct.id],
+        publishChanges,
+        globalCollectionIds,
+        globalCategoryIds,
+      )
+      setDraft(result.draft)
+      setDirtyFields((current) => {
+        const remaining = { ...current }
+        const pending = remaining[activeProduct.id]
+        if (pending) {
+          const unresolved = Object.fromEntries(
+            Object.entries(pending).filter(
+              ([field, value]) => publishChanges[0].changes[field as keyof ProductDraft] !== value,
+            ),
+          ) as Partial<ProductDraft>
+          if (Object.keys(unresolved).length) remaining[activeProduct.id] = unresolved
+          else delete remaining[activeProduct.id]
+        }
+        return remaining
+      })
+      // Deselect after publish so the row doesn't stay checked.
+      patchProduct(activeProduct.id, { selected: false })
+      const failed = result.results.filter(
+        (entry) => entry.status === 'failed' || entry.status === 'skipped',
+      ).length
+      showToast(
+        failed ? 'error' : 'success',
+        failed
+          ? `Publish finished with issues. See the issues log.`
+          : `${result.results.length} product published to the store.`,
+      )
+    } catch (requestError) {
+      showToast('error', requestError instanceof Error ? requestError.message : 'Product could not be posted.')
+    } finally {
+      setPublishing(false)
+    }
+  }
+
   // ── Render helpers ──
   const renderStatus = (status: string) => (
     <span className={`status status-${status}`}>{statusText[status] ?? status}</span>
@@ -1305,6 +1372,23 @@ function AppContent() {
       <label className="field readonly">
         <span>{label}</span>
         <input value={value ?? ''} readOnly />
+      </label>
+    )
+  }
+
+  const renderEditableTextInput = (label: string, field: 'title', value: string) => {
+    const isDirty = activeProduct && field in (dirtyFieldsFor(activeProduct.id) ?? {})
+    return (
+      <label className={`field ${isDirty ? 'dirty' : ''}`}>
+        <span>{label}</span>
+        <input
+          value={value ?? ''}
+          onChange={(event) =>
+            patchProduct(activeProduct!.id, {
+              [field]: event.target.value,
+            } as Partial<ProductDraft>)
+          }
+        />
       </label>
     )
   }
@@ -1742,7 +1826,7 @@ function AppContent() {
               disabled={busy || publishing || selectedProducts.filter((p) => p.sourceUrl).length === 0}
               onClick={() => void handleBulkRetrieve()}
             >
-              {retrievingBulk ? 'Retrieving…' : `Retrieve source data (${selectedProducts.filter((p) => p.sourceUrl).length})`}
+              {retrievingBulk ? 'Retrieving…' : `Bulk load page data (${selectedProducts.filter((p) => p.sourceUrl).length})`}
             </button>
             <button
               type="button"
@@ -1750,7 +1834,7 @@ function AppContent() {
               disabled={validSelectedProducts.length === 0 || publishing}
               onClick={() => setReviewOpen(true)}
             >
-              {publishing ? 'Posting…' : `Post selected (${validSelectedProducts.length})`}
+              {publishing ? 'Posting…' : `Bulk Post Checked (${validSelectedProducts.length})`}
             </button>
           </section>
           <section className="filter-bar" aria-label="Column filters">
@@ -2218,9 +2302,9 @@ function AppContent() {
                 {/* VIC-20 #4: For vican, Product Title spans full width of the pane */}
                 <div className={`field-grid ${activeProduct.supplier === 'vican' ? 'vican-title-full' : ''}`}>
                   {activeProduct.supplier === 'vican' ? (
-                    <div className="vican-title-full-width">{renderReadOnlyTextInput('Product Title', activeProduct.title)}</div>
+                    <div className="vican-title-full-width">{renderEditableTextInput('Product Title', 'title', activeProduct.title)}</div>
                   ) : (
-                    renderReadOnlyTextInput('Product Title', activeProduct.title)
+                    renderEditableTextInput('Product Title', 'title', activeProduct.title)
                   )}
                   {renderReadOnlyNumberInput('Unit price', activeProduct.unitPrice)}
                   {activeProduct.supplier !== 'vican' && renderReadOnlyNumberInput('Case price', activeProduct.casePrice)}
@@ -2301,8 +2385,21 @@ function AppContent() {
               />
 
               <div className="detail-fields">
+                {/* VIC-25: For Vican, brand/productType/containerType are supplier-owned (read-only) */}
+                {activeProduct.supplier === 'vican' && (
+                  <>
+                    {renderReadOnlyTextInput('Brand', activeProduct.brand)}
+                    {renderReadOnlyTextInput('Product Type', activeProduct.productType)}
+                    {renderReadOnlyTextInput('Container Type', activeProduct.containerType)}
+                  </>
+                )}
                 {(['brand', 'country', 'region', 'productType', 'abv', 'containerType', 'style'] as const)
-                  .filter((field) => !(activeProduct.supplier === 'vican' && field === 'abv'))
+                  .filter((field) => {
+                    if (activeProduct.supplier === 'vican' && field === 'abv') return false;
+                    // For Vican, these are rendered as read-only above
+                    if (activeProduct.supplier === 'vican' && (field === 'brand' || field === 'productType' || field === 'containerType')) return false;
+                    return true;
+                  })
                   .map(
                   (field) => (
                     <label
@@ -2525,7 +2622,7 @@ function AppContent() {
                 </small>
               </div>
 
-              {/* ── Save button (bottom of detail panel) ── */}
+              {/* ── Save & Publish buttons (bottom of detail panel) ── */}
               {activeProduct && (
                 <div className="detail-pane-footer">
                   {hasUnsavedChanges && (
@@ -2534,14 +2631,24 @@ function AppContent() {
                       {Object.keys(dirtyFields).length === 1 ? '' : 's'} with unsaved changes.
                     </div>
                   )}
-                  <button
-                    type="button"
-                    className="button button-primary"
-                    disabled={!hasUnsavedChanges || saving}
-                    onClick={() => void handleSave()}
-                  >
-                    {saving ? 'Saving…' : hasUnsavedChanges ? 'Save changes' : 'Saved'}
-                  </button>
+                  <div className="footer-buttons">
+                    <button
+                      type="button"
+                      className="button button-primary"
+                      disabled={!hasUnsavedChanges || saving}
+                      onClick={() => void handleSave()}
+                    >
+                      {saving ? 'Saving…' : hasUnsavedChanges ? 'Save changes' : 'Saved'}
+                    </button>
+                    <button
+                      type="button"
+                      className="button button-secondary"
+                      disabled={!activeProduct || publishing}
+                      onClick={() => void handlePublishSingle()}
+                    >
+                      {publishing ? 'Publishing…' : 'Publish'}
+                    </button>
+                  </div>
                 </div>
               )}
             </>

@@ -1,5 +1,5 @@
 import * as XLSX from 'xlsx';
-import { detectSupplier, SUPPLIER_MAPPINGS, type SupplierMapping } from './supplierConfig.js';
+import { detectSupplier, detectAliExpressLayout, SUPPLIER_MAPPINGS, ALIEXPRESS_VIC25_MAPPING, type SupplierMapping } from './supplierConfig.js';
 import { STANDARD_HEADERS, StandardCol, type StandardColumn } from './standardFormat.js';
 
 interface StandardRow {
@@ -12,6 +12,10 @@ interface StandardRow {
 /** Detect supplier type and get its mapping from workbook headers. */
 function getSupplierMapping(headers: string[], forceSupplier?: string): { mapping: SupplierMapping; supplier: string } {
   const supplier = forceSupplier ?? detectSupplier(headers);
+  // For AliExpress/Vican, check if the VIC-25 template layout is in use
+  if ((supplier === 'aliexpress' || supplier === 'vican') && detectAliExpressLayout(headers)) {
+    return { mapping: ALIEXPRESS_VIC25_MAPPING, supplier: 'vican' };
+  }
   const mapping = SUPPLIER_MAPPINGS[supplier] ?? SUPPLIER_MAPPINGS.cellar;
   return { mapping, supplier };
 }
@@ -137,10 +141,23 @@ export function transformToStandard(buffer: Buffer, forceSupplier?: string): { h
       standardValues[StandardCol.SUPPLIER_TYPE] = 'Paramount';
     }
 
-    // VIC-17: AliExpress cost price from native columns H (dollars=7) and I (cents=8)
-    if (supplier === 'aliexpress' || supplier === 'vican') {
+    // VIC-17: Legacy AliExpress cost price from native columns H (dollars=7) and I (cents=8).
+    // VIC-25 layout does NOT have cost columns here — G/H/I are product category, sub
+    // category, and attribc. Only extract cost for the legacy mapping.
+    if ((supplier === 'aliexpress' || supplier === 'vican') && mapping.priceReconstruction === 'from-fragmented' && mapping.brandColumn === undefined) {
       standardValues[StandardCol.COST_DOLLARS] = nativeValue(nativeRow, 7);
       standardValues[StandardCol.COST_CENTS] = nativeValue(nativeRow, 8);
+    }
+
+    // VIC-25: Extract workbook brand, product category (→productType), and sub category (→containerType)
+    if (mapping.brandColumn !== undefined && mapping.brandColumn !== null) {
+      standardValues[StandardCol.BRAND] = nativeValue(nativeRow, mapping.brandColumn);
+    }
+    if (mapping.productCategoryColumn !== undefined && mapping.productCategoryColumn !== null) {
+      standardValues[StandardCol.PRODUCT_TYPE] = nativeValue(nativeRow, mapping.productCategoryColumn);
+    }
+    if (mapping.subCategoryColumn !== undefined && mapping.subCategoryColumn !== null) {
+      standardValues[StandardCol.CONTAINER_TYPE] = nativeValue(nativeRow, mapping.subCategoryColumn);
     }
 
     standardRows.push({ values: standardValues, nativeRowIndex: nativeRowIndex + 2 });

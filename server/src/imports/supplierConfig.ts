@@ -27,6 +27,12 @@ export interface SupplierMapping {
   defaultSourcePlatform: string;
   /** How to reconstruct unit price when it's fragmented across columns. */
   priceReconstruction?: 'direct' | 'from-fragmented' | 'null';
+  /** Native column index for workbook brand (VIC-25 AliExpress). */
+  brandColumn?: number | null;
+  /** Native column index for product category, mapped to standard product_type. */
+  productCategoryColumn?: number | null;
+  /** Native column index for sub category, mapped to standard container_type. */
+  subCategoryColumn?: number | null;
 }
 
 /** Cellar (Paramount Liquor) — native layout: A(image), B(key), E(title), F(source URL), G(SOH), I(case), J(unit), K(type) */
@@ -44,7 +50,7 @@ export const CELLAR_MAPPING: SupplierMapping = {
   priceReconstruction: 'direct',
 };
 
-/** AliExpress (Vican) — native layout: A(product URL), B-I(images), J(title), K/L/M(fragmented price) */
+/** AliExpress (Vican) — legacy native layout: A(product URL), B-I(images), J(title), K/L/M(fragmented price) */
 export const ALIEXPRESS_MAPPING: SupplierMapping = {
   imageColumns: [1, 2, 3, 4, 5, 6, 7, 8],
   sourceColumn: null, // Will be set to "aliexpress" by transformation
@@ -57,6 +63,28 @@ export const ALIEXPRESS_MAPPING: SupplierMapping = {
   typeColumn: null,
   defaultSourcePlatform: 'aliexpress',
   priceReconstruction: 'from-fragmented',
+};
+
+/** AliExpress (Vican) VIC-25 template — native layout: A(SourceURI), B-F(images), G(AttribA=Product Category),
+ *  H(AttribB=Sub Category), J(title), K/L/M(fragmented price), N(brand), O(stock).
+ *  Only 5 image columns; G, H, I are no longer images — they are product category,
+ *  sub category, and attribc respectively. No cost-dollars/cost-cents columns.
+ */
+export const ALIEXPRESS_VIC25_MAPPING: SupplierMapping = {
+  imageColumns: [1, 2, 3, 4, 5, -1, -1, -1],
+  sourceColumn: null,
+  keyColumn: null,
+  titleColumn: null, // Uses native column J (9) special case
+  sourceUrlColumn: null, // Uses native column A (0) special case
+  sohColumn: 14, // column O
+  casePriceColumn: null,
+  unitPriceColumn: null, // Reconstructed from K/L/M
+  typeColumn: null,
+  defaultSourcePlatform: 'aliexpress',
+  priceReconstruction: 'from-fragmented',
+  brandColumn: 13, // column N
+  productCategoryColumn: 6, // column G → productType
+  subCategoryColumn: 7, // column H → containerType
 };
 
 /** Map of known supplier identifiers to their mappings. */
@@ -92,4 +120,11 @@ export function detectSupplier(headers: string[]): string {
 
   // Default fallback — cellar format matches the existing sup2_paramountliquor.xlsx
   return 'cellar';
+}
+
+/** Detect whether an AliExpress/Vican workbook uses the VIC-25 template layout.
+ *  Returns true when headers contain VIC-25-specific names like "SourceURI" or "ImageA". */
+export function detectAliExpressLayout(headers: string[]): boolean {
+  const headerText = headers.map((h) => h.toLocaleLowerCase()).join(' ');
+  return headerText.includes('sourceuri') || headerText.includes('imagea');
 }

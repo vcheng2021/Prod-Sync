@@ -441,9 +441,9 @@ a:hover { text-decoration: underline; }
   min-height: 28px;
   width: 100%;
   border: 1px solid var(--line);
-  border-radius: 4px;
+  border-radius: 6px;
   padding: 5px 9px;
-  font-size: 12px;
+  font-size: 13px;
   color: var(--ink);
   background: var(--panel);
   outline: none;
@@ -547,28 +547,30 @@ a:hover { text-decoration: underline; }
   list-style: none;
   display: inline-flex;
   align-items: center;
-  gap: 4px;
+  gap: 6px;
   min-height: 28px;
-  padding: 5px 8px;
+  padding: 5px 10px;
   border: 1px solid var(--line);
-  border-radius: 4px;
-  color: var(--muted);
+  border-radius: 6px;
+  color: var(--ink);
   background: var(--panel);
   cursor: pointer;
-  font: 11px/1 var(--mono);
+  font-size: 12px;
+  font-weight: 500;
   transition: var(--transition);
 }
 .column-filter summary::-webkit-details-marker { display: none; }
 .column-filter summary::after {
-  content: '+';
+  content: '▼';
   color: var(--coral);
-  font-size: 14px;
+  font-size: 9px;
+  transition: transform var(--transition);
 }
 .column-filter[open] summary {
   border-color: var(--coral);
   background: rgba(223, 118, 94, 0.05);
 }
-.column-filter[open] summary::after { content: '-'; }
+.column-filter[open] summary::after { transform: rotate(-90deg); }
 .filter-count {
   display: inline-grid;
   place-items: center;
@@ -583,9 +585,9 @@ a:hover { text-decoration: underline; }
 .filter-popover {
   position: absolute;
   z-index: 10;
-  top: calc(100% + 7px);
+  top: calc(100% + 8px);
   left: 0;
-  width: 240px;
+  width: 260px;
   padding: 10px;
   border: 1px solid var(--line);
   background: var(--panel);
@@ -642,20 +644,28 @@ a:hover { text-decoration: underline; }
   width: 100%;
 }
 .filter-options {
-  max-height: 220px;
+  max-height: 260px;
   overflow: auto;
-  margin: 9px 0;
+  padding: 4px 0;
+  margin: 8px 0;
+  border-top: 1px solid var(--line);
+  border-bottom: 1px solid var(--line);
 }
 .filter-options label {
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 5px 2px;
+  padding: 6px 10px;
   color: var(--ink);
-  font-size: 12px;
+  font-size: 13px;
   cursor: pointer;
 }
 .filter-options label:hover { background: var(--paper); }
+.filter-options label input[type="checkbox"] {
+  width: 16px;
+  height: 16px;
+  cursor: pointer;
+}
 .filter-options small { color: var(--muted); }
 .title-sort { margin-left: auto; min-width: 150px; }
 .title-sort > span { display: none; }
@@ -1217,6 +1227,11 @@ a:hover { text-decoration: underline; }
 }
 .detail-pane-footer .field-hint {
   margin: 0;
+}
+.detail-pane-footer .footer-buttons {
+  display: flex;
+  gap: 9px;
+  margin-left: auto;
 }
 .image-details {
   margin-top: 16px;

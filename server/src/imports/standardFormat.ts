@@ -4,7 +4,7 @@
  * parsing. This keeps xlsxParser.ts index-based and avoids per-supplier
  * parsing logic.
  *
- * Columns A–R:
+ * Columns A–U:
  *   A   image-1          Primary product image URL
  *   B   image-2          Secondary image URL
  *   C   image-3          Tertiary image URL
@@ -23,6 +23,9 @@
  *   P   Type             Supplier type / category
  *   Q   cost-dollars     Cost price dollars (AliExpress native column H)
  *   R   cost-cents       Cost price cents (AliExpress native column I)
+ *   S   brand            Workbook brand (VIC-25 AliExpress)
+ *   T   product_type     Product category / Product Type (VIC-25 AliExpress col G)
+ *   U   container_type   Sub category / Container Type (VIC-25 AliExpress col H)
  */
 export const STANDARD_HEADERS = [
   'image-1', 'image-2', 'image-3', 'image-4',
@@ -30,6 +33,9 @@ export const STANDARD_HEADERS = [
   'source', 'body-xxs', 'body-xs', 'body-xs href',
   'heading-xs', 'heading-xs 2', 'heading-xs 3', 'Type',
   'cost-dollars', 'cost-cents',
+  'brand',
+  'product_type',
+  'container_type',
 ] as const;
 
 export const STANDARD_COLUMN_COUNT = STANDARD_HEADERS.length;
@@ -54,6 +60,9 @@ export const StandardCol = {
   SUPPLIER_TYPE: 15,
   COST_DOLLARS: 16,
   COST_CENTS: 17,
+  BRAND: 18,
+  PRODUCT_TYPE: 19,
+  CONTAINER_TYPE: 20,
 } as const;
 
 export type StandardColumn = typeof STANDARD_HEADERS[number];
